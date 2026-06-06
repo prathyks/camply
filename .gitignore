@@ -140,3 +140,8 @@ camply/providers/usedirect/*/*.json
 
 # Camply Requirements Files
 requirements/*.bak
+
+# Local watcher config and runtime data (not for upstream)
+campgrounds.conf
+.camply_pids/
+logs/camply/

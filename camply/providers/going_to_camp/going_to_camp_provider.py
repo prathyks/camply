@@ -283,9 +283,22 @@ class GoingToCamp(BaseProvider):
         )
 
         campgrounds = []
-        # Fetch campgrounds details for all facilities
+        # Fetch campgrounds details for all facilities from the maps API.
+        # The maps API returns a list of map objects, each containing mapLinks
+        # that associate a resourceLocationId with a childMapId (the map for
+        # that campground).
         for camp_details in self._api_request(rec_area_id, "CAMP_DETAILS"):
-            self.campground_details[camp_details["resourceLocationId"]] = camp_details
+            rl_id = camp_details.get("resourceLocationId")
+            if rl_id is not None:
+                self.campground_details[rl_id] = camp_details
+            for map_link in camp_details.get("mapLinks", []):
+                link_rl_id = map_link.get("resourceLocationId")
+                if link_rl_id is not None:
+                    self.campground_details[link_rl_id] = {
+                        "resourceLocationId": link_rl_id,
+                        "mapId": map_link.get("childMapId"),
+                        "parentMapId": camp_details.get("mapId"),
+                    }
 
         # If a search string is provided, make sure every facility name contains
         # the search string
@@ -424,7 +437,13 @@ class GoingToCamp(BaseProvider):
         -------
         Tuple[dict, CampgroundFacility]
         """
-        self.campground_details[facility.resource_location_id]
+        if facility.resource_location_id not in self.campground_details:
+            logger.debug(
+                f"Skipping facility {facility.resource_location_name!r} "
+                f"(resource_location_id={facility.resource_location_id}): "
+                "not found in campground details"
+            )
+            return facility, None
         facility.id = _fetch_nested_key(
             self.campground_details, facility.resource_location_id, "mapId"
         )
