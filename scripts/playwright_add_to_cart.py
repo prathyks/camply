@@ -134,12 +134,10 @@ def main():
         page.wait_for_load_state("networkidle")
         time.sleep(3)
 
-        # Step 3: Navigate to Conconully
-        # Click through: Northeast Washington > Conconully
+        # Step 3: Navigate to Conconully and switch to List view
         print("[3/4] Finding Conconully State Park...")
         try:
-            # Look for Conconully in the map/list
-            # Try clicking on the map link or list item for Conconully
+            # Try clicking on Conconully in the map/navigation
             conconully_link = page.locator("text=Conconully").first
             if conconully_link.is_visible(timeout=5000):
                 conconully_link.click()
@@ -154,36 +152,53 @@ def main():
                     page.wait_for_load_state("networkidle")
                     time.sleep(2)
                     conconully_link = page.locator("text=Conconully").first
-                    conconully_link.click()
-                    page.wait_for_load_state("networkidle")
-                    time.sleep(2)
-                    print("  ✅ Found Conconully via Northeast")
+                    if conconully_link.is_visible(timeout=3000):
+                        conconully_link.click()
+                        page.wait_for_load_state("networkidle")
+                        time.sleep(2)
+                        print("  ✅ Found Conconully via Northeast")
         except Exception as e:
             print(f"  ⚠️  Navigation issue: {e}")
             print("  Continuing - you can manually navigate in the browser...")
 
-        # Step 4: Find and click on an available site
-        print("[4/4] Looking for available sites...")
+        # Switch to List view
+        print("  Switching to List view...")
+        try:
+            list_btn = page.locator('button:has-text("List"), [aria-label*="List"], [aria-label*="list"]').first
+            if list_btn.is_visible(timeout=5000):
+                list_btn.click()
+                time.sleep(2)
+                print("  ✅ Switched to List view")
+            else:
+                # Try tab/toggle that says "List"
+                list_tab = page.locator('text=List').first
+                if list_tab.is_visible(timeout=3000):
+                    list_tab.click()
+                    time.sleep(2)
+                    print("  ✅ Switched to List view (via text)")
+        except Exception as e:
+            print(f"  ⚠️  Could not switch to List view: {e}")
+
+        # Step 4: Find and click on an available site from the list
+        print("[4/4] Looking for available sites in list...")
         time.sleep(3)
 
-        # Look for green/available markers or the "Add to Stay" button
-        # The user may need to click on a specific site from the map/list
+        # In list view, available sites typically have a clickable row or "Book" button
         try:
-            # Try to find available site indicators (green dots on map or list items)
-            # Sites show as clickable elements on the map
-            available_site = page.locator('[class*="available"], [class*="open"], [data-availability="0"]').first
-            if available_site.is_visible(timeout=5000):
-                available_site.click()
+            # Look for available/bookable site in the list
+            available_row = page.locator('[class*="available"], [class*="bookable"], tr:has-text("Available")').first
+            if available_row.is_visible(timeout=5000):
+                available_row.click()
                 time.sleep(2)
-                print("  ✅ Clicked on available site")
+                print("  ✅ Clicked on available site in list")
         except Exception:
-            print("  ℹ️  Couldn't auto-click a site. Please click on an available site manually.")
-            print("     Green markers = available. Click one, then click 'Add to Stay'.")
+            print("  ℹ️  Couldn't auto-click a site from list.")
+            print("     Please click on an available site, then click 'Add to Stay'.")
 
         # Check for "Add to Stay" button
         try:
             add_button = page.locator('button#addToStay, button:has-text("Add to Stay")').first
-            if add_button.is_visible(timeout=10000):
+            if add_button.is_visible(timeout=15000):
                 print("\n  🎯 'Add to Stay' button found! Clicking...")
                 add_button.click()
                 time.sleep(3)
@@ -200,7 +215,7 @@ def main():
                 )
             else:
                 print("\n  ℹ️  'Add to Stay' button not visible yet.")
-                print("     Please select a site from the map, then click 'Add to Stay'.")
+                print("     Please select a site from the list, then click 'Add to Stay'.")
                 send_telegram(
                     f"🏕 Browser open at {CAMPGROUND_NAME}!\n"
                     f"📅 {START_DATE} to {END_DATE}\n"
