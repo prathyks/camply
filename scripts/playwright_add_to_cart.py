@@ -123,48 +123,43 @@ def main():
         from datetime import datetime
         start_dt = datetime.strptime(START_DATE, "%Y-%m-%d")
         end_dt = datetime.strptime(END_DATE, "%Y-%m-%d")
-        start_label = start_dt.strftime("%B %-d,")  # e.g. "June 19,"
-        end_label = end_dt.strftime("%B %-d,")      # e.g. "June 21,"
-        target_month = start_dt.strftime("%B %Y")   # e.g. "June 2026"
+        start_day = str(start_dt.day)   # e.g. "19"
+        end_day = str(end_dt.day)       # e.g. "21"
 
-        # Click the date picker area to open the calendar
+        # The calendar should already be showing near today's date (June 2026).
+        # From the recording, clicking the date area first opens it, then
+        # we click day buttons directly. The buttons have aria-labels like "June 19, 2026"
+        start_aria = start_dt.strftime("%B %-d, %Y")  # "June 19, 2026"
+        end_aria = end_dt.strftime("%B %-d, %Y")      # "June 21, 2026"
+
         try:
-            # Click on the date range display to open calendar
-            date_picker = page.locator('mat-date-range-input, [class*="date-range"], [class*="date-picker"]').first
-            if date_picker.is_visible(timeout=3000):
-                date_picker.click()
+            # Click on the date range area to open calendar
+            date_area = page.locator('mat-date-range-input, [class*="date-range"]').first
+            if date_area.is_visible(timeout=3000):
+                date_area.click()
                 time.sleep(1)
+        except Exception:
+            pass
+
+        # Try clicking dates by their full aria-label (includes year to avoid 2027)
+        try:
+            start_btn = page.locator(f'button[aria-label*="{start_aria}"], button:has-text("{start_aria}")').first
+            if start_btn.is_visible(timeout=3000):
+                start_btn.click()
+                time.sleep(0.5)
             else:
-                # Fallback: click on any element showing current dates
-                page.locator('[class*="calendar"], [class*="datepicker"]').first.click()
-                time.sleep(1)
-        except Exception:
-            pass
+                # Fallback: use the "June 19," pattern from recording
+                page.get_by_role("button", name=f"{start_dt.strftime('%B')} {start_day},").first.click()
+                time.sleep(0.5)
 
-        # Navigate to the correct month if needed
-        try:
-            for _ in range(12):  # Max 12 months forward
-                month_label = page.locator('[class*="calendar-header"], [class*="month-label"], button[aria-label*="month"]').first
-                if month_label.is_visible(timeout=2000):
-                    current_month_text = month_label.inner_text()
-                    if target_month.lower() in current_month_text.lower():
-                        break
-                # Click next month arrow
-                next_btn = page.locator('button[aria-label*="next"], button[class*="next"], .mat-calendar-next-button').first
-                if next_btn.is_visible(timeout=1000):
-                    next_btn.click()
-                    time.sleep(0.5)
-                else:
-                    break
-        except Exception:
-            pass
+            end_btn = page.locator(f'button[aria-label*="{end_aria}"], button:has-text("{end_aria}")').first
+            if end_btn.is_visible(timeout=3000):
+                end_btn.click()
+                time.sleep(0.5)
+            else:
+                page.get_by_role("button", name=f"{end_dt.strftime('%B')} {end_day},").first.click()
+                time.sleep(0.5)
 
-        # Select start and end dates
-        try:
-            page.get_by_role("button", name=start_label).click(timeout=5000)
-            time.sleep(0.5)
-            page.get_by_role("button", name=end_label).click(timeout=5000)
-            time.sleep(0.5)
             print(f"  ✅ Selected dates: {START_DATE} to {END_DATE}")
         except Exception as e:
             print(f"  ⚠️  Date selection issue: {e}")
