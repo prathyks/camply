@@ -120,23 +120,55 @@ def main():
         # Step 4: Set dates and party size
         print("[4/6] Setting dates and party size...")
 
-        # Parse start/end dates to find the right buttons
         from datetime import datetime
         start_dt = datetime.strptime(START_DATE, "%Y-%m-%d")
         end_dt = datetime.strptime(END_DATE, "%Y-%m-%d")
         start_label = start_dt.strftime("%B %-d,")  # e.g. "June 19,"
         end_label = end_dt.strftime("%B %-d,")      # e.g. "June 21,"
+        target_month = start_dt.strftime("%B %Y")   # e.g. "June 2026"
 
-        # Click on the date area to open calendar, then select dates
+        # Click the date picker area to open the calendar
+        try:
+            # Click on the date range display to open calendar
+            date_picker = page.locator('mat-date-range-input, [class*="date-range"], [class*="date-picker"]').first
+            if date_picker.is_visible(timeout=3000):
+                date_picker.click()
+                time.sleep(1)
+            else:
+                # Fallback: click on any element showing current dates
+                page.locator('[class*="calendar"], [class*="datepicker"]').first.click()
+                time.sleep(1)
+        except Exception:
+            pass
+
+        # Navigate to the correct month if needed
+        try:
+            for _ in range(12):  # Max 12 months forward
+                month_label = page.locator('[class*="calendar-header"], [class*="month-label"], button[aria-label*="month"]').first
+                if month_label.is_visible(timeout=2000):
+                    current_month_text = month_label.inner_text()
+                    if target_month.lower() in current_month_text.lower():
+                        break
+                # Click next month arrow
+                next_btn = page.locator('button[aria-label*="next"], button[class*="next"], .mat-calendar-next-button').first
+                if next_btn.is_visible(timeout=1000):
+                    next_btn.click()
+                    time.sleep(0.5)
+                else:
+                    break
+        except Exception:
+            pass
+
+        # Select start and end dates
         try:
             page.get_by_role("button", name=start_label).click(timeout=5000)
             time.sleep(0.5)
-            page.get_by_role("button", name=end_label).click()
+            page.get_by_role("button", name=end_label).click(timeout=5000)
             time.sleep(0.5)
             print(f"  ✅ Selected dates: {START_DATE} to {END_DATE}")
         except Exception as e:
             print(f"  ⚠️  Date selection issue: {e}")
-            print("     You may need to navigate to the right month manually.")
+            print("     Please select dates manually in the browser.")
 
         # Set number of people (default is 2, click "Add one" to increase)
         add_people_clicks = PEOPLE - 2  # default starts at 2
