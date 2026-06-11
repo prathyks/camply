@@ -69,6 +69,8 @@ def load_config():
     config = {}
     campgrounds = []
 
+    recdotgov_campgrounds = []
+
     with open(conf_file) as f:
         for line in f:
             line = line.strip()
@@ -85,6 +87,13 @@ def load_config():
                     "id": parts[2],
                     "name": parts[3] if len(parts) > 3 else "",
                 })
+            elif line.startswith("RecreationDotGov|"):
+                parts = line.split("|")
+                recdotgov_campgrounds.append({
+                    "provider": parts[0],
+                    "id": parts[1],
+                    "name": parts[2] if len(parts) > 2 else "",
+                })
 
     return {
         "start_date": config.get("START_DATE", "2026-06-19"),
@@ -94,6 +103,7 @@ def load_config():
         "people": int(config.get("PEOPLE", "5")),
         "tents": int(config.get("TENTS", "1")),
         "campgrounds": campgrounds,
+        "recdotgov_campgrounds": recdotgov_campgrounds,
     }
 
 
@@ -125,6 +135,66 @@ def _check_consecutive_availability(avails, min_nights):
                 if consecutive >= min_nights:
                     return True
     return False
+
+
+def check_recdotgov_availability(config, campground_name=None):
+    """
+    Check availability for Recreation.gov campgrounds using camply CLI.
+    Returns list of available campground dicts.
+    """
+    recdotgov = config.get("recdotgov_campgrounds", [])
+    if not recdotgov:
+        return []
+
+    if campground_name:
+        recdotgov = [cg for cg in recdotgov if campground_name.lower() in cg["name"].lower()]
+
+    if not recdotgov:
+        return []
+
+    # Build camply command
+    cg_args = []
+    for cg in recdotgov:
+        cg_args.extend(["--campground", cg["id"]])
+
+    camply_bin = os.path.expanduser("~/.local/share/pipx/venvs/camply/bin/camply")
+    if not os.path.exists(camply_bin):
+        camply_bin = "camply"
+
+    cmd = [
+        camply_bin, "campsites",
+        *cg_args,
+        "--start-date", config["start_date"],
+        "--end-date", config["end_date"],
+        "--nights", str(config["nights"]),
+        "--search-once",
+        "--notifications", "silent",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                env={**os.environ, "TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": ""})
+        output = result.stdout + result.stderr
+
+        # Check if camply found any sites (look for campsite match indicators)
+        if "Matching Campsites Found" in output and "0 Matching Campsites" not in output:
+            # Try to identify which campground had availability
+            for cg in recdotgov:
+                if cg["id"] in output or cg["name"].split("(")[0].strip().lower() in output.lower():
+                    print(f"  ✅ {cg['name']}: AVAILABLE! (Recreation.gov)")
+                    return [cg]
+            # Couldn't identify which, return first
+            print(f"  ✅ Recreation.gov: AVAILABLE!")
+            return [recdotgov[0]]
+        else:
+            for cg in recdotgov:
+                print(f"  ❌ {cg['name']}: No availability (Recreation.gov)")
+    except subprocess.TimeoutExpired:
+        print("  ⚠️  Recreation.gov check timed out")
+    except Exception as e:
+        print(f"  ⚠️  Recreation.gov check error: {e}")
+
+    return []
 
 
 def check_availability(config, campground_name=None):
@@ -486,9 +556,12 @@ def main():
     print(f"  Polling: every {config['polling_interval']} minutes")
     if args.campground:
         print(f"  Filter: {args.campground}")
-    print(f"  Campgrounds: {len(config['campgrounds'])}")
+    print(f"  GoingToCamp campgrounds: {len(config['campgrounds'])}")
     for cg in config["campgrounds"]:
-        print(f"    • {cg['name']}")
+        print(f"    • [GTC] {cg['name']}")
+    print(f"  Recreation.gov campgrounds: {len(config['recdotgov_campgrounds'])}")
+    for cg in config["recdotgov_campgrounds"]:
+        print(f"    • [Rec] {cg['name']}")
     print("=" * 60)
     print()
 
@@ -501,11 +574,19 @@ def main():
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"\n[{now_str}] Check #{check_count}...")
 
+        # Check GoingToCamp campgrounds
+        available = []
         try:
             available = check_availability(config, campground_name=args.campground)
         except Exception as e:
-            print(f"  ❌ Error checking availability: {e}")
-            available = []
+            print(f"  ❌ Error checking GoingToCamp: {e}")
+
+        # Check Recreation.gov campgrounds (if no GoingToCamp match yet)
+        if not available:
+            try:
+                available = check_recdotgov_availability(config, campground_name=args.campground)
+            except Exception as e:
+                print(f"  ❌ Error checking Recreation.gov: {e}")
 
         if available:
             cg = available[0]  # Take first available
@@ -515,7 +596,19 @@ def main():
 
             print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}!")
 
-            if args.dry_run:
+            if cg.get("provider") == "RecreationDotGov":
+                # Recreation.gov — send Telegram with booking link only
+                booking_url = f"https://www.recreation.gov/camping/campgrounds/{cg['id']}"
+                print(f"  📱 Sending Telegram notification (Recreation.gov)")
+                send_telegram(
+                    f"🏕 Campsite available!\n"
+                    f"📍 {cg['name']}\n"
+                    f"📅 {config['start_date']} to {config['end_date']}\n"
+                    f"👥 {config['people']} people\n"
+                    f"🔗 {booking_url}\n"
+                    f"⏰ Book manually on Recreation.gov!"
+                )
+            elif args.dry_run:
                 print("  [DRY RUN] Would launch Playwright to add to cart.")
                 send_telegram(
                     f"🏕 [DRY RUN] Availability found!\n"
@@ -530,8 +623,9 @@ def main():
                     f"⏰ Launching browser in VNC..."
                 )
                 launch_playwright_add_to_cart(short_name, config)
-                # After Playwright exits (user closed browser), stop watching
-                break
+                # After Playwright exits (user closed browser), continue watching
+
+            print("\n  Resuming watcher...")
         else:
             print("  No availability found.")
 
