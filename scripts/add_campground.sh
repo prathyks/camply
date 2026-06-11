@@ -64,23 +64,27 @@ if [[ -z "$PROVIDER" || "$PROVIDER" == "RecreationDotGov" ]]; then
     echo "🔍 Searching RecreationDotGov..."
     output=$($CAMPLY_BIN campgrounds --search "$SEARCH_TERM" 2>&1 || true)
 
-    while IFS= read -r line; do
-        if [[ "$line" =~ "🏕" ]]; then
-            # Extract campground name and ID from lines like:
-            # ⛰  Mount Rainier National Park, WA (#2835) - 🏕  Ohanapecosh Campground (#232465)
-            if [[ "$line" =~ \#([0-9]+)\)$ ]]; then
-                cg_id="${BASH_REMATCH[1]}"
-                # Extract campground name (between 🏕 and (#id))
-                cg_name=$(echo "$line" | sed -n 's/.*🏕[[:space:]]*\(.*\) (#[0-9]*)/\1/p' | xargs)
-                # Extract rec area info
-                rec_area_info=$(echo "$line" | sed -n 's/.*⛰[[:space:]]*\(.*\) - 🏕.*/\1/p' | xargs)
+    # Camply output wraps across lines. Join continuation lines, then parse.
+    # Pattern: "⛰  Rec Area (#ID) - 🏕\n  Campground Name (#ID)"
+    # Merge into single lines for parsing
+    merged_output=$(echo "$output" | tr '\n' '§' | sed 's/§[[:space:]]*\([^[§]*\)(#/  \1(#/g' | tr '§' '\n')
 
+    while IFS= read -r line; do
+        # Match lines with both rec area and campground: ⛰ ... (#rec_id) - 🏕 ... (#cg_id)
+        if [[ "$line" =~ ⛰ ]] && [[ "$line" =~ \#([0-9]+)\)[[:space:]]*$ ]]; then
+            cg_id="${BASH_REMATCH[1]}"
+            # Extract campground name (after 🏕, before (#id))
+            cg_name=$(echo "$line" | sed 's/.*🏕[[:space:]]*//' | sed 's/ (#[0-9]*).*$//' | xargs)
+            # Extract rec area info (after ⛰, before - 🏕)
+            rec_area_info=$(echo "$line" | sed 's/.*⛰[[:space:]]*//' | sed 's/ - 🏕.*//' | xargs)
+
+            if [[ -n "$cg_id" && -n "$cg_name" ]]; then
                 RESULTS+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
                 RESULT_LINES+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
                 echo "  [${#RESULTS[@]}] ${cg_name} (#${cg_id}) — ${rec_area_info}"
             fi
         fi
-    done <<< "$output"
+    done <<< "$merged_output"
 
     if [[ ${#RESULTS[@]} -eq 0 || "$output" =~ "0 Matching" ]]; then
         echo "  No results on RecreationDotGov"
@@ -93,21 +97,22 @@ if [[ -z "$PROVIDER" || "$PROVIDER" == "GoingToCamp" ]]; then
     echo "🔍 Searching GoingToCamp (WA State Parks)..."
     output=$($CAMPLY_BIN --provider GoingToCamp campgrounds --rec-area 3 --search "$SEARCH_TERM" 2>&1 || true)
 
+    # Merge wrapped lines
+    merged_output=$(echo "$output" | tr '\n' '§' | sed 's/§[[:space:]]*\([^[§]*\)(#/  \1(#/g' | tr '§' '\n')
+
     prev_count=${#RESULTS[@]}
     while IFS= read -r line; do
-        if [[ "$line" =~ "🏕" ]]; then
-            # Extract from lines like:
-            # ⛰  Washington State Parks, Washington (#3) - 🏕  Deception Pass State Park (#-2147483624)
-            if [[ "$line" =~ \#(-?[0-9]+)\)$ ]]; then
-                cg_id="${BASH_REMATCH[1]}"
-                cg_name=$(echo "$line" | sed -n 's/.*🏕[[:space:]]*\(.*\) (#-\?[0-9]*)/\1/p' | xargs)
+        if [[ "$line" =~ ⛰ ]] && [[ "$line" =~ \#(-?[0-9]+)\)[[:space:]]*$ ]]; then
+            cg_id="${BASH_REMATCH[1]}"
+            cg_name=$(echo "$line" | sed 's/.*🏕[[:space:]]*//' | sed 's/ (#-\?[0-9]*).*$//' | xargs)
 
+            if [[ -n "$cg_id" && -n "$cg_name" ]]; then
                 RESULTS+=("GoingToCamp|3|${cg_id}|${cg_name}")
                 RESULT_LINES+=("GoingToCamp|3|${cg_id}|${cg_name}")
                 echo "  [${#RESULTS[@]}] ${cg_name} (#${cg_id}) — WA State Parks"
             fi
         fi
-    done <<< "$output"
+    done <<< "$merged_output"
 
     if [[ ${#RESULTS[@]} -eq $prev_count ]]; then
         echo "  No results on GoingToCamp"
