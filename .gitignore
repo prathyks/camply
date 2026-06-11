@@ -145,3 +145,8 @@ requirements/*.bak
 campgrounds.conf
 .camply_pids/
 logs/camply/
+
+# Scripts runtime artifacts
+scripts/node_modules/
+scripts/recon_output.json
+scripts/session_cookies.json
