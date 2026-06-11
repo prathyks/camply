@@ -231,7 +231,17 @@ def main():
                 time.sleep(2)
                 print("  ✅ Clicked 'Reserve'")
 
-                # Confirm reservation details
+                # Check the "All reservation details are correct" checkbox
+                try:
+                    checkbox = page.get_by_text("All reservation details are")
+                    if checkbox.is_visible(timeout=5000):
+                        checkbox.click()
+                        time.sleep(1)
+                        print("  ✅ Checked 'All reservation details are correct'")
+                except Exception:
+                    pass
+
+                # Click "Confirm reservation details" button
                 try:
                     confirm_btn = page.get_by_role("button", name="Confirm reservation details")
                     if confirm_btn.is_visible(timeout=10000):
