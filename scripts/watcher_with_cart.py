@@ -112,6 +112,21 @@ def send_telegram(message):
         pass
 
 
+def _check_consecutive_availability(avails, min_nights):
+    """Check if any resource has min_nights consecutive available days."""
+    for rid, days in avails.items():
+        if isinstance(days, list):
+            consecutive = 0
+            for day in days:
+                if isinstance(day, dict) and day.get("availability") == 0:
+                    consecutive += 1
+                else:
+                    consecutive = 0
+                if consecutive >= min_nights:
+                    return True
+    return False
+
+
 def check_availability(config, campground_name=None):
     """
     Check availability using camply's GoingToCamp provider via API.
@@ -219,27 +234,28 @@ def check_availability(config, campground_name=None):
         avails = data.get("resourceAvailabilities", {})
         map_link_avails = data.get("mapLinkAvailabilities", {})
 
-        # Check direct resource availability (0 = available)
-        has_available = False
-        for rid, days in avails.items():
-            if isinstance(days, list):
-                # Count consecutive available nights
-                consecutive = 0
-                for day in days:
-                    if day.get("availability") == 0:
-                        consecutive += 1
-                    else:
-                        consecutive = 0
-                    if consecutive >= config["nights"]:
-                        has_available = True
-                        break
-            if has_available:
-                break
+        # Check direct resource availability (0 = available for consecutive nights)
+        has_available = _check_consecutive_availability(avails, config["nights"])
 
-        # Also check sub-map availability
-        if not has_available:
+        # If no direct resources but sub-maps exist, drill into each sub-map
+        if not has_available and map_link_avails:
             for sub_map_id, avail_status in map_link_avails.items():
-                if isinstance(avail_status, list) and 0 in avail_status:
+                # avail_status is a list like [0] or [5] where 0 = has availability
+                if not isinstance(avail_status, list) or 0 not in avail_status:
+                    continue
+                # Drill into this sub-map to verify consecutive nights
+                time.sleep(2)
+                sub_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                sub_params = params.copy()
+                sub_params["mapId"] = int(sub_map_id)
+                sub_params["seed"] = sub_now
+                sub_params["bookingUid"] = str(uuid4())
+                sub_resp = session.get(f"{BASE_URL}/api/availability/map", params=sub_params)
+                session.headers["x-xsrf-token"] = get_latest_xsrf()
+                if sub_resp.status_code != 200:
+                    continue
+                sub_avails = sub_resp.json().get("resourceAvailabilities", {})
+                if _check_consecutive_availability(sub_avails, config["nights"]):
                     has_available = True
                     break
 
