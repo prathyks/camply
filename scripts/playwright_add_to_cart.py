@@ -7,13 +7,13 @@ and adds it to cart. Run this inside a VNC session to see the browser.
 
 Usage:
     cd ~/camply
-    ~/.local/share/pipx/venvs/camply/bin/python scripts/playwright_add_to_cart.py
+    python scripts/playwright_add_to_cart.py
 
 The browser will remain open after adding to cart so you can checkout manually.
 """
 
-import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -30,34 +30,23 @@ GTC_PASSWORD = os.getenv("GTC_PASSWORD")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Search parameters
+# Search parameters (from campgrounds.conf)
 START_DATE = "2026-06-19"
 END_DATE = "2026-06-21"
 PEOPLE = 5
 TENTS = 1
 
-# Conconully State Park for testing
-CAMPGROUND_NAME = "Conconully State Park"
+# Campground to search
+CAMPGROUND_NAME = "Conconully"
+
 BASE_URL = "https://washington.goingtocamp.com"
 
-# Build search URL
-SEARCH_URL = (
-    f"{BASE_URL}/create-booking/results"
-    f"?transactionLocationId=NULL"
-    f"&resourceLocationId=NULL"
-    f"&mapId=-2147483335"  # Root map - will drill down
-    f"&searchTabGroupId=0"
-    f"&bookingCategoryId=0"
-    f"&startDate={START_DATE}"
-    f"&endDate={END_DATE}"
-    f"&nights=2"
-    f"&isReserving=true"
-    f"&equipmentId=-32768"
-    f"&subEquipmentId=-32768"
-    f"&peopleCapacityCategoryCounts=%5B%5B-32767%2Cnull%2C{PEOPLE}%2Cnull%5D%5D"
-    f"&searchTime=2026-06-11T00%3A00%3A00.000"
-    f"&flexibleSearch=%5Bfalse%2Cfalse%2C%222026-06-01%22%2C1%5D"
-)
+# Tent option labels
+TENT_OPTIONS = {
+    1: "1 Tent",
+    2: "2 Tents",
+    3: "3 Tents",
+}
 
 
 def send_telegram(message):
@@ -88,162 +77,171 @@ def main():
     print()
 
     with sync_playwright() as p:
-        # Launch visible browser
-        browser = p.chromium.launch(
-            headless=False,
-            args=["--start-maximized"],
-        )
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            no_viewport=True,
-        )
+        browser = p.chromium.launch(headless=False)
+        context = browser.new_context()
         page = context.new_page()
 
-        # Step 1: Navigate to site and login
-        print("[1/4] Logging in...")
+        # Step 1: Accept cookies
+        print("[1/6] Loading site and accepting cookies...")
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
-        time.sleep(2)
-
-        # Accept cookies if banner appears
         try:
-            cookie_btn = page.locator('button:has-text("Accept"), button:has-text("OK"), button:has-text("Got it"), button:has-text("I understand"), button:has-text("Agree"), button:has-text("Continue")').first
-            if cookie_btn.is_visible(timeout=3000):
-                cookie_btn.click()
-                time.sleep(1)
-                print("  ✅ Accepted cookie banner")
+            page.get_by_role("button", name="I Consent").click(timeout=5000)
+            print("  ✅ Accepted cookies")
         except Exception:
-            pass
+            print("  ℹ️  No cookie banner (already accepted)")
 
-        # Navigate to login page
-        page.goto(f"{BASE_URL}/login")
+        # Step 2: Login
+        print("[2/6] Logging in...")
+        page.get_by_role("button", name="Sign in to your account").click()
         page.wait_for_load_state("networkidle")
         time.sleep(1)
-
-        # Fill login form
-        page.fill('input[type="email"], input#email', GTC_EMAIL)
-        page.fill('input[type="password"], input#password', GTC_PASSWORD)
-        page.click('button[type="submit"]')
+        page.get_by_role("textbox", name="Email").fill(GTC_EMAIL)
+        page.get_by_role("textbox", name="Password").fill(GTC_PASSWORD)
+        page.get_by_role("button", name="Sign in", exact=True).click()
         page.wait_for_load_state("networkidle")
         time.sleep(2)
         print("  ✅ Logged in")
 
-        # Step 2: Navigate to search
-        print("[2/4] Navigating to campground search...")
-        page.goto(SEARCH_URL)
+        # Step 3: Start reservation search
+        print("[3/6] Starting reservation search...")
+        page.get_by_role("button", name="Create reservation").click()
+        page.wait_for_load_state("networkidle")
+        time.sleep(2)
+
+        # Select park
+        page.get_by_role("combobox", name="Select park").click()
+        page.get_by_role("combobox", name="Select park").fill(CAMPGROUND_NAME[:3].lower())
+        time.sleep(1)
+        page.get_by_role("option", name=CAMPGROUND_NAME).click()
+        time.sleep(1)
+        print(f"  ✅ Selected {CAMPGROUND_NAME}")
+
+        # Step 4: Set dates and party size
+        print("[4/6] Setting dates and party size...")
+
+        # Parse start/end dates to find the right buttons
+        from datetime import datetime
+        start_dt = datetime.strptime(START_DATE, "%Y-%m-%d")
+        end_dt = datetime.strptime(END_DATE, "%Y-%m-%d")
+        start_label = start_dt.strftime("%B %-d,")  # e.g. "June 19,"
+        end_label = end_dt.strftime("%B %-d,")      # e.g. "June 21,"
+
+        # Click on the date area to open calendar, then select dates
+        try:
+            page.get_by_role("button", name=start_label).click(timeout=5000)
+            time.sleep(0.5)
+            page.get_by_role("button", name=end_label).click()
+            time.sleep(0.5)
+            print(f"  ✅ Selected dates: {START_DATE} to {END_DATE}")
+        except Exception as e:
+            print(f"  ⚠️  Date selection issue: {e}")
+            print("     You may need to navigate to the right month manually.")
+
+        # Set number of people (default is 2, click "Add one" to increase)
+        add_people_clicks = PEOPLE - 2  # default starts at 2
+        if add_people_clicks > 0:
+            for _ in range(add_people_clicks):
+                page.get_by_role("button", name="Add one").click()
+                time.sleep(0.3)
+            print(f"  ✅ Set party size to {PEOPLE}")
+
+        # Select tent equipment
+        tent_label = TENT_OPTIONS.get(TENTS, "1 Tent")
+        try:
+            page.locator("#equipment-field-wrapper > .mat-mdc-text-field-wrapper > .mat-mdc-form-field-flex").click()
+            time.sleep(0.5)
+            page.get_by_role("option", name=tent_label).click()
+            time.sleep(0.5)
+            print(f"  ✅ Selected equipment: {tent_label}")
+        except Exception as e:
+            print(f"  ⚠️  Equipment selection issue: {e}")
+
+        # Step 5: Search and find site
+        print("[5/6] Searching for availability...")
+        page.get_by_role("button", name="Search for availability").click()
         page.wait_for_load_state("networkidle")
         time.sleep(3)
 
-        # Step 3: Navigate to Conconully and switch to List view
-        print("[3/4] Finding Conconully State Park...")
-        try:
-            # Try clicking on Conconully in the map/navigation
-            conconully_link = page.locator("text=Conconully").first
-            if conconully_link.is_visible(timeout=5000):
-                conconully_link.click()
-                page.wait_for_load_state("networkidle")
-                time.sleep(2)
-                print("  ✅ Found Conconully")
-            else:
-                # Try Northeast region first
-                ne_link = page.locator("text=Northeast").first
-                if ne_link.is_visible(timeout=3000):
-                    ne_link.click()
-                    page.wait_for_load_state("networkidle")
-                    time.sleep(2)
-                    conconully_link = page.locator("text=Conconully").first
-                    if conconully_link.is_visible(timeout=3000):
-                        conconully_link.click()
-                        page.wait_for_load_state("networkidle")
-                        time.sleep(2)
-                        print("  ✅ Found Conconully via Northeast")
-        except Exception as e:
-            print(f"  ⚠️  Navigation issue: {e}")
-            print("  Continuing - you can manually navigate in the browser...")
+        # Switch to list view
+        page.get_by_role("radio", name="List view of results").click()
+        time.sleep(2)
+        print("  ✅ Switched to List view")
 
-        # Switch to List view
-        print("  Switching to List view...")
+        # Click on a site group that has availability
         try:
-            list_btn = page.locator('button:has-text("List"), [aria-label*="List"], [aria-label*="list"]').first
-            if list_btn.is_visible(timeout=5000):
-                list_btn.click()
+            # Look for a site group button (like "Site Sites 1-50...")
+            site_group = page.locator('button[class*="site"], button:has-text("Site")').first
+            if site_group.is_visible(timeout=5000):
+                site_group.click()
                 time.sleep(2)
-                print("  ✅ Switched to List view")
-            else:
-                # Try tab/toggle that says "List"
-                list_tab = page.locator('text=List').first
-                if list_tab.is_visible(timeout=3000):
-                    list_tab.click()
-                    time.sleep(2)
-                    print("  ✅ Switched to List view (via text)")
-        except Exception as e:
-            print(f"  ⚠️  Could not switch to List view: {e}")
-
-        # Step 4: Find and click on an available site from the list
-        print("[4/4] Looking for available sites in list...")
-        time.sleep(3)
-
-        # In list view, available sites typically have a clickable row or "Book" button
-        try:
-            # Look for available/bookable site in the list
-            available_row = page.locator('[class*="available"], [class*="bookable"], tr:has-text("Available")').first
-            if available_row.is_visible(timeout=5000):
-                available_row.click()
-                time.sleep(2)
-                print("  ✅ Clicked on available site in list")
         except Exception:
-            print("  ℹ️  Couldn't auto-click a site from list.")
-            print("     Please click on an available site, then click 'Add to Stay'.")
+            pass
 
-        # Check for "Add to Stay" button
+        # Find and click first available site
         try:
-            add_button = page.locator('button#addToStay, button:has-text("Add to Stay")').first
-            if add_button.is_visible(timeout=15000):
-                print("\n  🎯 'Add to Stay' button found! Clicking...")
-                add_button.click()
-                time.sleep(3)
-                print("  ✅ Clicked 'Add to Stay'!")
+            available_site = page.get_by_role("button", name=re.compile(r".*Available.*")).first
+            if available_site.is_visible(timeout=5000):
+                site_name = available_site.inner_text()
+                available_site.click()
+                time.sleep(2)
+                print(f"  ✅ Selected available site: {site_name.strip()}")
+        except Exception as e:
+            print(f"  ⚠️  Could not auto-select site: {e}")
+            print("     Please click an available site manually.")
 
-                # Send Telegram notification
-                send_telegram(
-                    f"🏕 Site added to cart!\n"
-                    f"📍 {CAMPGROUND_NAME}\n"
-                    f"📅 {START_DATE} to {END_DATE}\n"
-                    f"👥 {PEOPLE} people, {TENTS} tent(s)\n"
-                    f"🔗 {BASE_URL}/cart\n"
-                    f"⏰ Go to VNC to checkout!"
-                )
+        # Step 6: Reserve / Add to cart
+        print("[6/6] Adding to cart...")
+        try:
+            reserve_btn = page.get_by_role("button", name="Reserve")
+            if reserve_btn.is_visible(timeout=10000):
+                reserve_btn.click()
+                time.sleep(2)
+                print("  ✅ Clicked 'Reserve'")
+
+                # Confirm reservation details
+                try:
+                    confirm_btn = page.get_by_role("button", name="Confirm reservation details")
+                    if confirm_btn.is_visible(timeout=10000):
+                        confirm_btn.click()
+                        time.sleep(3)
+                        print("  ✅ Confirmed reservation details!")
+
+                        send_telegram(
+                            f"🏕 Site added to cart!\n"
+                            f"📍 {CAMPGROUND_NAME}\n"
+                            f"📅 {START_DATE} to {END_DATE}\n"
+                            f"👥 {PEOPLE} people, {TENTS} tent(s)\n"
+                            f"🔗 {BASE_URL}/cart\n"
+                            f"⏰ Go to VNC to checkout!"
+                        )
+                except Exception as e:
+                    print(f"  ⚠️  Confirm step issue: {e}")
             else:
-                print("\n  ℹ️  'Add to Stay' button not visible yet.")
-                print("     Please select a site from the list, then click 'Add to Stay'.")
-                send_telegram(
-                    f"🏕 Browser open at {CAMPGROUND_NAME}!\n"
-                    f"📅 {START_DATE} to {END_DATE}\n"
-                    f"⏰ Connect to VNC to select a site and add to cart."
-                )
-        except Exception:
-            print("\n  ℹ️  Waiting for you to manually select a site and click 'Add to Stay'.")
+                print("  ⚠️  'Reserve' button not found. Please click manually.")
+        except Exception as e:
+            print(f"  ⚠️  Reserve issue: {e}")
             send_telegram(
                 f"🏕 Browser open at {CAMPGROUND_NAME}!\n"
                 f"📅 {START_DATE} to {END_DATE}\n"
-                f"⏰ Connect to VNC to select a site and add to cart."
+                f"⏰ Connect to VNC to finish adding to cart."
             )
 
         print("\n" + "=" * 60)
-        print("  Browser is open! You can now:")
-        print("  1. Select an available site (green marker on map)")
-        print("  2. Click 'Add to Stay'")
-        print("  3. Proceed to checkout")
+        print("  Browser is open! You can:")
+        print("  1. Verify the cart")
+        print("  2. Proceed to checkout/payment")
         print("")
         print("  Press Ctrl+C to close when done.")
         print("=" * 60)
 
-        # Keep browser open indefinitely
+        # Keep browser open
         try:
             while True:
                 time.sleep(60)
         except KeyboardInterrupt:
             print("\nClosing browser...")
+            context.close()
             browser.close()
 
 
