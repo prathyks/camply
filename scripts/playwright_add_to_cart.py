@@ -101,6 +101,21 @@ def main():
 
         # Step 1: Navigate to site and login
         print("[1/4] Logging in...")
+        page.goto(BASE_URL)
+        page.wait_for_load_state("networkidle")
+        time.sleep(2)
+
+        # Accept cookies if banner appears
+        try:
+            cookie_btn = page.locator('button:has-text("Accept"), button:has-text("OK"), button:has-text("Got it"), button:has-text("I understand"), button:has-text("Agree"), button:has-text("Continue")').first
+            if cookie_btn.is_visible(timeout=3000):
+                cookie_btn.click()
+                time.sleep(1)
+                print("  ✅ Accepted cookie banner")
+        except Exception:
+            pass
+
+        # Navigate to login page
         page.goto(f"{BASE_URL}/login")
         page.wait_for_load_state("networkidle")
         time.sleep(1)
