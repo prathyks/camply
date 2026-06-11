@@ -568,11 +568,22 @@ def main():
     if args.dry_run:
         print("[DRY RUN] Checking availability once...\n")
 
+    # Track active Playwright process (max 1 at a time)
+    playwright_process = None
+    playwright_campground = None  # which campground has the active browser
+
     check_count = 0
     while True:
         check_count += 1
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"\n[{now_str}] Check #{check_count}...")
+
+        # Check if Playwright process has exited
+        if playwright_process is not None:
+            if playwright_process.poll() is not None:
+                print(f"  ℹ️  Browser for {playwright_campground} closed (exit code {playwright_process.returncode})")
+                playwright_process = None
+                playwright_campground = None
 
         # Check GoingToCamp campgrounds
         available = []
@@ -581,7 +592,7 @@ def main():
         except Exception as e:
             print(f"  ❌ Error checking GoingToCamp: {e}")
 
-        # Check Recreation.gov campgrounds (if no GoingToCamp match yet)
+        # Check Recreation.gov campgrounds
         if not available:
             try:
                 available = check_recdotgov_availability(config, campground_name=args.campground)
@@ -616,16 +627,37 @@ def main():
                     f"📅 {config['start_date']} to {config['end_date']}"
                 )
             else:
-                send_telegram(
-                    f"🏕 Availability found! Adding to cart...\n"
-                    f"📍 {cg['name']}\n"
-                    f"📅 {config['start_date']} to {config['end_date']}\n"
-                    f"⏰ Launching browser in VNC..."
-                )
-                launch_playwright_add_to_cart(short_name, config)
-                # After Playwright exits (user closed browser), continue watching
-
-            print("\n  Resuming watcher...")
+                # GoingToCamp: launch Playwright if no browser is currently open
+                if playwright_process is None:
+                    print(f"  🚀 Launching browser for {cg['name']}...")
+                    send_telegram(
+                        f"🏕 Availability found! Adding to cart...\n"
+                        f"📍 {cg['name']}\n"
+                        f"📅 {config['start_date']} to {config['end_date']}\n"
+                        f"⏰ Launching browser in VNC..."
+                    )
+                    # Spawn Playwright as a subprocess so watcher keeps running
+                    playwright_process = subprocess.Popen(
+                        [sys.executable, str(PROJECT_ROOT / "scripts" / "playwright_add_to_cart.py")],
+                        env={
+                            **os.environ,
+                            "CAMPLY_CAMPGROUND": short_name,
+                            "CAMPLY_START_DATE": config["start_date"],
+                            "CAMPLY_END_DATE": config["end_date"],
+                            "CAMPLY_PEOPLE": str(config["people"]),
+                            "CAMPLY_TENTS": str(config["tents"]),
+                        },
+                    )
+                    playwright_campground = cg["name"]
+                else:
+                    # Browser already open — just send notification
+                    print(f"  📱 Browser already open for {playwright_campground}. Sending notification only.")
+                    send_telegram(
+                        f"🏕 Also available: {cg['name']}\n"
+                        f"📅 {config['start_date']} to {config['end_date']}\n"
+                        f"ℹ️ Browser already open for {playwright_campground}.\n"
+                        f"Close it to auto-book the next one."
+                    )
         else:
             print("  No availability found.")
 

@@ -30,14 +30,14 @@ GTC_PASSWORD = os.getenv("GTC_PASSWORD")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Search parameters (from campgrounds.conf)
-START_DATE = "2026-06-19"
-END_DATE = "2026-06-21"
-PEOPLE = 5
-TENTS = 1
+# Search parameters (from env vars if spawned by watcher, else defaults)
+START_DATE = os.getenv("CAMPLY_START_DATE", "2026-06-19")
+END_DATE = os.getenv("CAMPLY_END_DATE", "2026-06-21")
+PEOPLE = int(os.getenv("CAMPLY_PEOPLE", "5"))
+TENTS = int(os.getenv("CAMPLY_TENTS", "1"))
 
-# Campground to search
-CAMPGROUND_NAME = "Conconully"
+# Campground to search (from env var if spawned by watcher)
+CAMPGROUND_NAME = os.getenv("CAMPLY_CAMPGROUND", "Conconully")
 
 BASE_URL = "https://washington.goingtocamp.com"
 
