@@ -244,12 +244,13 @@ def check_availability(config, campground_name=None):
                     break
 
         if has_available:
-            available_campgrounds.append(cg)
             print(f"  ✅ {cg['name']}: AVAILABLE!")
+            # Return immediately on first match (first match wins)
+            return [cg]
         else:
             print(f"  ❌ {cg['name']}: No availability")
 
-    return available_campgrounds
+    return []
 
 
 # Map tent count to subEquipmentCategoryId
