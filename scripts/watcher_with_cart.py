@@ -172,11 +172,15 @@ def check_availability(config, campground_name=None):
 
     available_campgrounds = []
 
-    for cg in campgrounds_to_check:
+    for i, cg in enumerate(campgrounds_to_check):
         cg_id = cg["id"]
         map_id = cg_map_ids.get(cg_id)
         if not map_id:
             continue
+
+        # Small delay between campground checks to avoid rate limiting
+        if i > 0:
+            time.sleep(2)
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         params = {
