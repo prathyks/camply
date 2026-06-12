@@ -50,21 +50,26 @@ BASE_URL = "https://washington.goingtocamp.com"
 # Map tent count to subEquipmentCategoryId
 TENT_IDS = {1: -32768, 2: -32767, 3: -32766}
 
-# Campground name to mapId (root map for search results page)
-# These are the parent maps that show all sub-areas for each park
-CAMPGROUND_MAP_IDS = {
-    "Deception Pass": -2147483388,
-    "Lake Wenatchee": -2147483375,
-    "Rasar": -2147483362,
-    "Lake Chelan": -2147483377,
-    "Wenatchee Confluence": -2147483349,
-    "Conconully": -2147483391,
+# Campground lookup: name -> (mapId, resourceLocationId, transactionLocationId)
+# mapId = the park-level child map (shows sub-areas/loops)
+# resourceLocationId = the campground identifier
+# transactionLocationId = required for the search URL
+CAMPGROUND_INFO = {
+    "Deception Pass": {"mapId": -2147483388, "resourceLocationId": -2147483624, "transactionLocationId": -2147483630},
+    "Lake Wenatchee": {"mapId": -2147483375, "resourceLocationId": -2147483594, "transactionLocationId": -2147483608},
+    "Rasar": {"mapId": -2147483362, "resourceLocationId": -2147483567, "transactionLocationId": -2147483588},
+    "Lake Chelan": {"mapId": -2147483377, "resourceLocationId": -2147483599, "transactionLocationId": -2147483612},
+    "Wenatchee Confluence": {"mapId": -2147483349, "resourceLocationId": -2147483543, "transactionLocationId": -2147483568},
+    "Conconully": {"mapId": -2147483391, "resourceLocationId": -2147483628, "transactionLocationId": -2147483634},
 }
 
 
 def build_search_url():
     """Build the direct search results URL with all parameters pre-filled."""
-    map_id = CAMPGROUND_MAP_IDS.get(CAMPGROUND_NAME, -2147483335)
+    info = CAMPGROUND_INFO.get(CAMPGROUND_NAME, {})
+    map_id = info.get("mapId", -2147483335)
+    resource_location_id = info.get("resourceLocationId", "NULL")
+    transaction_location_id = info.get("transactionLocationId", "NULL")
     sub_equip_id = TENT_IDS.get(TENTS, -32768)
     now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000")
 
@@ -80,8 +85,8 @@ def build_search_url():
 
     url = (
         f"{BASE_URL}/create-booking/results"
-        f"?transactionLocationId=NULL"
-        f"&resourceLocationId=NULL"
+        f"?transactionLocationId={transaction_location_id}"
+        f"&resourceLocationId={resource_location_id}"
         f"&mapId={map_id}"
         f"&searchTabGroupId=0"
         f"&bookingCategoryId=0"
