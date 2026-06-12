@@ -339,12 +339,11 @@ def check_availability(config, campground_name=None):
 
         if has_available:
             print(f"  ✅ {cg['name']}: AVAILABLE!")
-            # Return immediately on first match (first match wins)
-            return [cg]
+            available_campgrounds.append(cg)
         else:
             print(f"  ❌ {cg['name']}: No availability")
 
-    return []
+    return available_campgrounds
 
 
 # Map tent count to subEquipmentCategoryId
@@ -600,72 +599,71 @@ def main():
         except Exception as e:
             print(f"  ❌ Error checking GoingToCamp: {e}")
 
-        # Check Recreation.gov campgrounds
-        if not available:
-            try:
-                available = check_recdotgov_availability(config, campground_name=args.campground)
-            except Exception as e:
-                print(f"  ❌ Error checking Recreation.gov: {e}")
+        # Also check Recreation.gov campgrounds
+        try:
+            recdotgov_available = check_recdotgov_availability(config, campground_name=args.campground)
+            available.extend(recdotgov_available)
+        except Exception as e:
+            print(f"  ❌ Error checking Recreation.gov: {e}")
 
         if available:
-            cg = available[0]  # Take first available
-            cg_name = cg["name"].replace(" State Park", "")
-            # Also check CAMPGROUND_NAMES for short name
-            short_name = CAMPGROUND_NAMES.get(cg["id"], cg_name)
+            for cg in available:
+                cg_name = cg["name"].replace(" State Park", "")
+                short_name = CAMPGROUND_NAMES.get(cg["id"], cg_name)
 
-            print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}!")
+                print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}!")
 
-            if cg.get("provider") == "RecreationDotGov":
-                # Recreation.gov — send Telegram with booking link only
-                booking_url = f"https://www.recreation.gov/camping/campgrounds/{cg['id']}"
-                print(f"  📱 Sending Telegram notification (Recreation.gov)")
-                send_telegram(
-                    f"🏕 Campsite available!\n"
-                    f"📍 {cg['name']}\n"
-                    f"📅 {config['start_date']} to {config['end_date']}\n"
-                    f"👥 {config['people']} people\n"
-                    f"🔗 {booking_url}\n"
-                    f"⏰ Book manually on Recreation.gov!"
-                )
-            elif args.dry_run:
-                print("  [DRY RUN] Would launch Playwright to add to cart.")
-                send_telegram(
-                    f"🏕 [DRY RUN] Availability found!\n"
-                    f"📍 {cg['name']}\n"
-                    f"📅 {config['start_date']} to {config['end_date']}"
-                )
-            else:
-                # GoingToCamp: launch Playwright if no browser is currently open
-                if playwright_process is None:
-                    print(f"  🚀 Launching browser for {cg['name']}...")
+                if cg.get("provider") == "RecreationDotGov":
+                    # Recreation.gov — send Telegram with booking link only
+                    booking_url = f"https://www.recreation.gov/camping/campgrounds/{cg['id']}"
+                    print(f"  📱 Sending Telegram notification (Recreation.gov)")
                     send_telegram(
-                        f"🏕 Availability found! Adding to cart...\n"
+                        f"🏕 Campsite available!\n"
                         f"📍 {cg['name']}\n"
                         f"📅 {config['start_date']} to {config['end_date']}\n"
-                        f"⏰ Launching browser in VNC..."
+                        f"👥 {config['people']} people\n"
+                        f"🔗 {booking_url}\n"
+                        f"⏰ Book manually on Recreation.gov!"
                     )
-                    # Spawn Playwright as a subprocess so watcher keeps running
-                    playwright_process = subprocess.Popen(
-                        [sys.executable, str(PROJECT_ROOT / "scripts" / "playwright_add_to_cart.py")],
-                        env={
-                            **os.environ,
-                            "CAMPLY_CAMPGROUND": short_name,
-                            "CAMPLY_START_DATE": config["start_date"],
-                            "CAMPLY_END_DATE": config["end_date"],
-                            "CAMPLY_PEOPLE": str(config["people"]),
-                            "CAMPLY_TENTS": str(config["tents"]),
-                        },
-                    )
-                    playwright_campground = cg["name"]
-                else:
-                    # Browser already open — just send notification
-                    print(f"  📱 Browser already open for {playwright_campground}. Sending notification only.")
+                elif args.dry_run:
+                    print("  [DRY RUN] Would launch Playwright to add to cart.")
                     send_telegram(
-                        f"🏕 Also available: {cg['name']}\n"
-                        f"📅 {config['start_date']} to {config['end_date']}\n"
-                        f"ℹ️ Browser already open for {playwright_campground}.\n"
-                        f"Close it to auto-book the next one."
+                        f"🏕 [DRY RUN] Availability found!\n"
+                        f"📍 {cg['name']}\n"
+                        f"📅 {config['start_date']} to {config['end_date']}"
                     )
+                else:
+                    # GoingToCamp: launch Playwright if no browser is currently open
+                    if playwright_process is None:
+                        print(f"  🚀 Launching browser for {cg['name']}...")
+                        send_telegram(
+                            f"🏕 Availability found! Adding to cart...\n"
+                            f"📍 {cg['name']}\n"
+                            f"📅 {config['start_date']} to {config['end_date']}\n"
+                            f"⏰ Launching browser in VNC..."
+                        )
+                        # Spawn Playwright as a subprocess so watcher keeps running
+                        playwright_process = subprocess.Popen(
+                            [sys.executable, str(PROJECT_ROOT / "scripts" / "playwright_add_to_cart.py")],
+                            env={
+                                **os.environ,
+                                "CAMPLY_CAMPGROUND": short_name,
+                                "CAMPLY_START_DATE": config["start_date"],
+                                "CAMPLY_END_DATE": config["end_date"],
+                                "CAMPLY_PEOPLE": str(config["people"]),
+                                "CAMPLY_TENTS": str(config["tents"]),
+                            },
+                        )
+                        playwright_campground = cg["name"]
+                    else:
+                        # Browser already open — just send notification
+                        print(f"  📱 Browser already open for {playwright_campground}. Sending notification only.")
+                        send_telegram(
+                            f"🏕 Also available: {cg['name']}\n"
+                            f"📅 {config['start_date']} to {config['end_date']}\n"
+                            f"ℹ️ Browser already open for {playwright_campground}.\n"
+                            f"Close it to auto-book the next one."
+                        )
         else:
             print("  No availability found.")
 
