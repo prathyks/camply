@@ -2,21 +2,27 @@
 """
 Playwright Add-to-Cart Script (Headed - for VNC)
 
-Opens a visible browser, logs in to GoingToCamp, finds an available site,
-and adds it to cart. Run this inside a VNC session to see the browser.
+Opens a visible browser, logs in to GoingToCamp, navigates directly to
+search results via pre-built URL, and adds an available site to cart.
 
 Usage:
     cd ~/camply
     python scripts/playwright_add_to_cart.py
 
+    # Override via env vars (set by watcher_with_cart.py):
+    CAMPLY_CAMPGROUND="Conconully" CAMPLY_START_DATE="2026-06-19" ...
+
 The browser will remain open after adding to cart so you can checkout manually.
+If no sites are available, the browser closes automatically after 30 seconds.
 """
 
 import os
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
@@ -41,25 +47,66 @@ CAMPGROUND_NAME = os.getenv("CAMPLY_CAMPGROUND", "Conconully")
 
 BASE_URL = "https://washington.goingtocamp.com"
 
-# Tent option labels
-TENT_OPTIONS = {
-    1: "1 Tent",
-    2: "2 Tents",
-    3: "3 Tents",
+# Map tent count to subEquipmentCategoryId
+TENT_IDS = {1: -32768, 2: -32767, 3: -32766}
+
+# Campground name to mapId (root map for search results page)
+# These are the parent maps that show all sub-areas for each park
+CAMPGROUND_MAP_IDS = {
+    "Deception Pass": -2147483388,
+    "Lake Wenatchee": -2147483375,
+    "Rasar": -2147483362,
+    "Lake Chelan": -2147483377,
+    "Wenatchee Confluence": -2147483349,
+    "Conconully": -2147483391,
 }
+
+
+def build_search_url():
+    """Build the direct search results URL with all parameters pre-filled."""
+    map_id = CAMPGROUND_MAP_IDS.get(CAMPGROUND_NAME, -2147483335)
+    sub_equip_id = TENT_IDS.get(TENTS, -32768)
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000")
+
+    # peopleCapacityCategoryCounts format: [[-32767,null,count,null]]
+    people_param = quote(f"[[-32767,null,{PEOPLE},null]]")
+    # filterData: exclude ADA-only and Equestrian sites
+    filter_data = quote('{"-32759":"[[1],0,0,0]","-32708":"[[1],0,0,0]"}')
+
+    url = (
+        f"{BASE_URL}/create-booking/results"
+        f"?transactionLocationId=NULL"
+        f"&resourceLocationId=NULL"
+        f"&mapId={map_id}"
+        f"&searchTabGroupId=0"
+        f"&bookingCategoryId=0"
+        f"&startDate={START_DATE}"
+        f"&endDate={END_DATE}"
+        f"&nights={int((datetime.strptime(END_DATE, '%Y-%m-%d') - datetime.strptime(START_DATE, '%Y-%m-%d')).days)}"
+        f"&isReserving=true"
+        f"&equipmentId=-32768"
+        f"&subEquipmentId={sub_equip_id}"
+        f"&peopleCapacityCategoryCounts={people_param}"
+        f"&searchTime={quote(now)}"
+        f"&flexibleSearch={quote('[false,false,\"' + START_DATE[:7] + '-01\",1]')}"
+        f"&filterData={filter_data}"
+    )
+    return url
 
 
 def send_telegram(message):
     """Send a Telegram notification."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("  [Telegram not configured]")
         return
     import requests
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-        json={"chat_id": TELEGRAM_CHAT_ID, "text": message},
-    )
-    print("  📱 Telegram notification sent")
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": message},
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 
 def main():
@@ -67,8 +114,10 @@ def main():
         print("ERROR: Set GTC_EMAIL and GTC_PASSWORD in .env")
         sys.exit(1)
 
+    search_url = build_search_url()
+
     print("=" * 60)
-    print("  GoingToCamp Add-to-Cart (Playwright - Headed)")
+    print("  GoingToCamp Add-to-Cart (Fast Direct URL)")
     print("=" * 60)
     print(f"  Campground: {CAMPGROUND_NAME}")
     print(f"  Dates: {START_DATE} to {END_DATE}")
@@ -81,18 +130,15 @@ def main():
         context = browser.new_context()
         page = context.new_page()
 
-        # Step 1: Accept cookies
-        print("[1/6] Loading site and accepting cookies...")
+        # Step 1: Accept cookies + Login
+        print("[1/4] Logging in...")
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
         try:
             page.get_by_role("button", name="I Consent").click(timeout=5000)
-            print("  ✅ Accepted cookies")
         except Exception:
-            print("  ℹ️  No cookie banner (already accepted)")
+            pass
 
-        # Step 2: Login
-        print("[2/6] Logging in...")
         page.get_by_role("button", name="Sign in to your account").click()
         page.wait_for_load_state("networkidle")
         time.sleep(1)
@@ -103,122 +149,59 @@ def main():
         time.sleep(2)
         print("  ✅ Logged in")
 
-        # Step 3: Start reservation search
-        print("[3/6] Starting reservation search...")
-        page.get_by_role("button", name="Create reservation").click()
-        page.wait_for_load_state("networkidle")
-        time.sleep(2)
-
-        # Select park
-        page.get_by_role("combobox", name="Select park").click()
-        page.get_by_role("combobox", name="Select park").fill(CAMPGROUND_NAME[:3].lower())
-        time.sleep(1)
-        page.get_by_role("option", name=CAMPGROUND_NAME).click()
-        time.sleep(1)
-        print(f"  ✅ Selected {CAMPGROUND_NAME}")
-
-        # Step 4: Set dates and party size
-        print("[4/6] Setting dates and party size...")
-
-        from datetime import datetime
-        start_dt = datetime.strptime(START_DATE, "%Y-%m-%d")
-        end_dt = datetime.strptime(END_DATE, "%Y-%m-%d")
-        start_day = str(start_dt.day)   # e.g. "19"
-        end_day = str(end_dt.day)       # e.g. "21"
-
-        # The calendar should already be showing near today's date (June 2026).
-        # From the recording, clicking the date area first opens it, then
-        # we click day buttons directly. The buttons have aria-labels like "June 19, 2026"
-        start_aria = start_dt.strftime("%B %-d, %Y")  # "June 19, 2026"
-        end_aria = end_dt.strftime("%B %-d, %Y")      # "June 21, 2026"
-
-        try:
-            # Click on the date range area to open calendar
-            date_area = page.locator('mat-date-range-input, [class*="date-range"]').first
-            if date_area.is_visible(timeout=3000):
-                date_area.click()
-                time.sleep(1)
-        except Exception:
-            pass
-
-        # Try clicking dates by their full aria-label (includes year to avoid 2027)
-        try:
-            start_btn = page.locator(f'button[aria-label*="{start_aria}"], button:has-text("{start_aria}")').first
-            if start_btn.is_visible(timeout=3000):
-                start_btn.click()
-                time.sleep(0.5)
-            else:
-                # Fallback: use the "June 19," pattern from recording
-                page.get_by_role("button", name=f"{start_dt.strftime('%B')} {start_day},").first.click()
-                time.sleep(0.5)
-
-            end_btn = page.locator(f'button[aria-label*="{end_aria}"], button:has-text("{end_aria}")').first
-            if end_btn.is_visible(timeout=3000):
-                end_btn.click()
-                time.sleep(0.5)
-            else:
-                page.get_by_role("button", name=f"{end_dt.strftime('%B')} {end_day},").first.click()
-                time.sleep(0.5)
-
-            print(f"  ✅ Selected dates: {START_DATE} to {END_DATE}")
-        except Exception as e:
-            print(f"  ⚠️  Date selection issue: {e}")
-            print("     Please select dates manually in the browser.")
-
-        # Set number of people (default is 2, click "Add one" to increase)
-        add_people_clicks = PEOPLE - 2  # default starts at 2
-        if add_people_clicks > 0:
-            for _ in range(add_people_clicks):
-                page.get_by_role("button", name="Add one").click()
-                time.sleep(0.3)
-            print(f"  ✅ Set party size to {PEOPLE}")
-
-        # Select tent equipment
-        tent_label = TENT_OPTIONS.get(TENTS, "1 Tent")
-        try:
-            page.locator("#equipment-field-wrapper > .mat-mdc-text-field-wrapper > .mat-mdc-form-field-flex").click()
-            time.sleep(0.5)
-            page.get_by_role("option", name=tent_label).click()
-            time.sleep(0.5)
-            print(f"  ✅ Selected equipment: {tent_label}")
-        except Exception as e:
-            print(f"  ⚠️  Equipment selection issue: {e}")
-
-        # Step 5: Search and find site
-        print("[5/6] Searching for availability...")
-        page.get_by_role("button", name="Search for availability").click()
+        # Step 2: Go directly to search results URL (skip form filling)
+        print("[2/4] Navigating to search results...")
+        page.goto(search_url)
         page.wait_for_load_state("networkidle")
         time.sleep(3)
+        print(f"  ✅ Loaded search results for {CAMPGROUND_NAME}")
 
-        # Switch to list view
-        page.get_by_role("radio", name="List view of results").click()
-        time.sleep(2)
-        print("  ✅ Switched to List view")
-
-        # Click on a site group that has availability
+        # Step 3: Switch to list view and select first available site
+        print("[3/4] Finding available site...")
         try:
-            # Look for a site group button (like "Site Sites 1-50...")
-            site_group = page.locator('button[class*="site"], button:has-text("Site")').first
+            page.get_by_role("radio", name="List view of results").click()
+            time.sleep(2)
+            print("  ✅ Switched to List view")
+        except Exception:
+            print("  ⚠️  Could not switch to list view")
+
+        # Click site group if present
+        try:
+            site_group = page.get_by_role("button", name=re.compile(r"Site.*")).first
             if site_group.is_visible(timeout=5000):
                 site_group.click()
                 time.sleep(2)
         except Exception:
             pass
 
-        # Find and click first available site
+        # Click first available site
+        site_found = False
         try:
             available_site = page.get_by_role("button", name=re.compile(r".*Available.*")).first
             if available_site.is_visible(timeout=5000):
-                site_name = available_site.inner_text()
+                site_text = available_site.inner_text()
                 available_site.click()
                 time.sleep(2)
-                print(f"  ✅ Selected available site: {site_name.strip()}")
-        except Exception as e:
-            print(f"  ⚠️  Could not auto-select site: {e}")
-            print("     Please click an available site manually.")
+                site_found = True
+                print(f"  ✅ Selected: {site_text.strip()}")
+        except Exception:
+            pass
 
-        # Step 6: Reserve / Add to cart
-        print("[6/6] Adding to cart...")
+        if not site_found:
+            print("  ❌ No available sites found in list.")
+            print("  Site may have been taken. Closing browser in 10 seconds...")
+            send_telegram(
+                f"⚠️ Site at {CAMPGROUND_NAME} was taken before we could book.\n"
+                f"📅 {START_DATE} to {END_DATE}\n"
+                f"Watcher will keep trying."
+            )
+            time.sleep(10)
+            context.close()
+            browser.close()
+            sys.exit(1)
+
+        # Step 4: Reserve and confirm
+        print("[4/4] Adding to cart...")
         try:
             reserve_btn = page.get_by_role("button", name="Reserve")
             if reserve_btn.is_visible(timeout=10000):
@@ -226,51 +209,43 @@ def main():
                 time.sleep(2)
                 print("  ✅ Clicked 'Reserve'")
 
-                # Check the "All reservation details are correct" checkbox
+                # Checkbox
                 try:
-                    checkbox = page.get_by_text("All reservation details are")
-                    if checkbox.is_visible(timeout=5000):
-                        checkbox.click()
-                        time.sleep(1)
-                        print("  ✅ Checked 'All reservation details are correct'")
+                    page.get_by_text("All reservation details are").click(timeout=5000)
+                    time.sleep(1)
+                    print("  ✅ Checked confirmation")
                 except Exception:
                     pass
 
-                # Click "Confirm reservation details" button
+                # Confirm
                 try:
-                    confirm_btn = page.get_by_role("button", name="Confirm reservation details")
-                    if confirm_btn.is_visible(timeout=10000):
-                        confirm_btn.click()
-                        time.sleep(3)
-                        print("  ✅ Confirmed reservation details!")
-
-                        send_telegram(
-                            f"🏕 Site added to cart!\n"
-                            f"📍 {CAMPGROUND_NAME}\n"
-                            f"📅 {START_DATE} to {END_DATE}\n"
-                            f"👥 {PEOPLE} people, {TENTS} tent(s)\n"
-                            f"🔗 {BASE_URL}/cart\n"
-                            f"⏰ Go to VNC to checkout!"
-                        )
+                    page.get_by_role("button", name="Confirm reservation details").click(timeout=10000)
+                    time.sleep(3)
+                    print("  ✅ Added to cart!")
+                    send_telegram(
+                        f"🏕 Site added to cart!\n"
+                        f"📍 {CAMPGROUND_NAME}\n"
+                        f"📅 {START_DATE} to {END_DATE}\n"
+                        f"👥 {PEOPLE} people, {TENTS} tent(s)\n"
+                        f"🔗 {BASE_URL}/cart\n"
+                        f"⏰ ~15 min to checkout! Go to VNC!"
+                    )
                 except Exception as e:
-                    print(f"  ⚠️  Confirm step issue: {e}")
+                    print(f"  ⚠️  Confirm issue: {e}")
             else:
-                print("  ⚠️  'Reserve' button not found. Please click manually.")
+                print("  ⚠️  'Reserve' button not found.")
+                send_telegram(
+                    f"⚠️ Found site at {CAMPGROUND_NAME} but couldn't reserve.\n"
+                    f"📅 {START_DATE} to {END_DATE}\n"
+                    f"⏰ Connect to VNC to complete manually."
+                )
         except Exception as e:
             print(f"  ⚠️  Reserve issue: {e}")
-            send_telegram(
-                f"🏕 Browser open at {CAMPGROUND_NAME}!\n"
-                f"📅 {START_DATE} to {END_DATE}\n"
-                f"⏰ Connect to VNC to finish adding to cart."
-            )
 
-        print("\n" + "=" * 60)
-        print("  Browser is open! You can:")
-        print("  1. Verify the cart")
-        print("  2. Proceed to checkout/payment")
-        print("")
-        print("  Press Ctrl+C to close when done.")
-        print("=" * 60)
+        print(f"\n{'=' * 60}")
+        print("  Browser is open! Checkout when ready.")
+        print("  Press Ctrl+C to close.")
+        print(f"{'=' * 60}")
 
         # Keep browser open
         try:
