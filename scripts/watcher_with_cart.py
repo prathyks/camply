@@ -123,11 +123,19 @@ def send_telegram(message):
 
 
 def _check_consecutive_availability(avails, min_nights):
-    """Check if any resource has min_nights consecutive available days."""
+    """
+    Check if any resource has min_nights consecutive available nights.
+
+    The availability array includes the checkout day as the last entry,
+    which is NOT a bookable night. Only check entries [0..n-2] for bookable
+    nights (last entry is checkout day status).
+    """
     for rid, days in avails.items():
         if isinstance(days, list):
+            # Exclude the last entry (checkout day) - only bookable nights matter
+            bookable_days = days[:-1] if len(days) > 1 else days
             consecutive = 0
-            for day in days:
+            for day in bookable_days:
                 if isinstance(day, dict) and day.get("availability") == 0:
                     consecutive += 1
                 else:
