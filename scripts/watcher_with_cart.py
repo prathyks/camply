@@ -263,9 +263,9 @@ def check_availability(config, campground_name=None):
         if not map_id:
             continue
 
-        # 30s delay between campground checks to avoid rate limiting
+        # 5s delay between campground checks
         if i > 0:
-            time.sleep(30)
+            time.sleep(5)
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         params = {
