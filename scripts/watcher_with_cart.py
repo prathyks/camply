@@ -129,20 +129,29 @@ def _check_consecutive_availability(avails, min_nights):
     The availability array includes the checkout day as the last entry,
     which is NOT a bookable night. Only check entries [0..n-2] for bookable
     nights (last entry is checkout day status).
+
+    Returns list of available resource IDs with their consecutive night count,
+    or empty list if none found.
     """
+    available_sites = []
     for rid, days in avails.items():
         if isinstance(days, list):
             # Exclude the last entry (checkout day) - only bookable nights matter
             bookable_days = days[:-1] if len(days) > 1 else days
             consecutive = 0
+            max_consecutive = 0
             for day in bookable_days:
                 if isinstance(day, dict) and day.get("availability") == 0:
                     consecutive += 1
+                    max_consecutive = max(max_consecutive, consecutive)
                 else:
                     consecutive = 0
-                if consecutive >= min_nights:
-                    return True
-    return False
+            if max_consecutive >= min_nights:
+                available_sites.append({
+                    "resourceId": int(rid),
+                    "consecutive_nights": max_consecutive,
+                })
+    return available_sites
 
 
 def check_recdotgov_availability(config, campground_name=None):
@@ -313,10 +322,10 @@ def check_availability(config, campground_name=None):
         map_link_avails = data.get("mapLinkAvailabilities", {})
 
         # Check direct resource availability (0 = available for consecutive nights)
-        has_available = _check_consecutive_availability(avails, config["nights"])
+        found_sites = _check_consecutive_availability(avails, config["nights"])
 
         # If no direct resources but sub-maps exist, drill into each sub-map
-        if not has_available and map_link_avails:
+        if not found_sites and map_link_avails:
             for sub_map_id, avail_status in map_link_avails.items():
                 # avail_status is a list like [0] or [5] where 0 = has availability
                 if not isinstance(avail_status, list) or 0 not in avail_status:
@@ -333,12 +342,16 @@ def check_availability(config, campground_name=None):
                 if sub_resp.status_code != 200:
                     continue
                 sub_avails = sub_resp.json().get("resourceAvailabilities", {})
-                if _check_consecutive_availability(sub_avails, config["nights"]):
-                    has_available = True
+                sub_sites = _check_consecutive_availability(sub_avails, config["nights"])
+                if sub_sites:
+                    found_sites.extend(sub_sites)
                     break
 
-        if has_available:
-            print(f"  ✅ {cg['name']}: AVAILABLE!")
+        if found_sites:
+            num_sites = len(found_sites)
+            max_nights = max(s["consecutive_nights"] for s in found_sites)
+            print(f"  ✅ {cg['name']}: AVAILABLE! ({num_sites} site(s), up to {max_nights} nights)")
+            cg["available_sites"] = found_sites
             available_campgrounds.append(cg)
         else:
             print(f"  ❌ {cg['name']}: No availability")
@@ -611,17 +624,27 @@ def main():
                 cg_name = cg["name"].replace(" State Park", "")
                 short_name = CAMPGROUND_NAMES.get(cg["id"], cg_name)
 
-                print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}!")
+                # Build details string from available sites info
+                sites_info = cg.get("available_sites", [])
+                num_sites = len(sites_info)
+                max_nights = max((s["consecutive_nights"] for s in sites_info), default=config["nights"])
+                details = (
+                    f"📍 {cg['name']}\n"
+                    f"📅 {config['start_date']} to {config['end_date']}\n"
+                    f"🛏 {max_nights} consecutive night(s) available\n"
+                    f"🏕 {num_sites} site(s) found\n"
+                    f"👥 {config['people']} people, {config['tents']} tent(s)"
+                )
+
+                print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}! ({num_sites} sites, {max_nights} nights)")
 
                 if cg.get("provider") == "RecreationDotGov":
                     # Recreation.gov — send Telegram with booking link only
                     booking_url = f"https://www.recreation.gov/camping/campgrounds/{cg['id']}"
                     print(f"  📱 Sending Telegram notification (Recreation.gov)")
                     send_telegram(
-                        f"🏕 Campsite available!\n"
-                        f"📍 {cg['name']}\n"
-                        f"📅 {config['start_date']} to {config['end_date']}\n"
-                        f"👥 {config['people']} people\n"
+                        f"🏕 Campsite Available!\n"
+                        f"{details}\n"
                         f"🔗 {booking_url}\n"
                         f"⏰ Book manually on Recreation.gov!"
                     )
@@ -629,17 +652,15 @@ def main():
                     print("  [DRY RUN] Would launch Playwright to add to cart.")
                     send_telegram(
                         f"🏕 [DRY RUN] Availability found!\n"
-                        f"📍 {cg['name']}\n"
-                        f"📅 {config['start_date']} to {config['end_date']}"
+                        f"{details}"
                     )
                 else:
                     # GoingToCamp: launch Playwright if no browser is currently open
                     if playwright_process is None:
                         print(f"  🚀 Launching browser for {cg['name']}...")
                         send_telegram(
-                            f"🏕 Availability found! Adding to cart...\n"
-                            f"📍 {cg['name']}\n"
-                            f"📅 {config['start_date']} to {config['end_date']}\n"
+                            f"🏕 Availability Found! Adding to cart...\n"
+                            f"{details}\n"
                             f"⏰ Launching browser in VNC..."
                         )
                         # Spawn Playwright as a subprocess so watcher keeps running
@@ -659,10 +680,10 @@ def main():
                         # Browser already open — just send notification
                         print(f"  📱 Browser already open for {playwright_campground}. Sending notification only.")
                         send_telegram(
-                            f"🏕 Also available: {cg['name']}\n"
-                            f"📅 {config['start_date']} to {config['end_date']}\n"
+                            f"🏕 Also Available!\n"
+                            f"{details}\n"
                             f"ℹ️ Browser already open for {playwright_campground}.\n"
-                            f"Close it to auto-book the next one."
+                            f"Close it to auto-book this one next."
                         )
         else:
             print("  No availability found.")
