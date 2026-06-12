@@ -73,6 +73,11 @@ def build_search_url():
     # filterData: exclude ADA-only and Equestrian sites
     filter_data = quote('{"-32759":"[[1],0,0,0]","-32708":"[[1],0,0,0]"}')
 
+    nights = int((datetime.strptime(END_DATE, "%Y-%m-%d") - datetime.strptime(START_DATE, "%Y-%m-%d")).days)
+    search_time = quote(now)
+    flex_date = START_DATE[:7] + "-01"
+    flexible_search = quote(f'[false,false,"{flex_date}",1]')
+
     url = (
         f"{BASE_URL}/create-booking/results"
         f"?transactionLocationId=NULL"
@@ -82,13 +87,13 @@ def build_search_url():
         f"&bookingCategoryId=0"
         f"&startDate={START_DATE}"
         f"&endDate={END_DATE}"
-        f"&nights={int((datetime.strptime(END_DATE, '%Y-%m-%d') - datetime.strptime(START_DATE, '%Y-%m-%d')).days)}"
+        f"&nights={nights}"
         f"&isReserving=true"
         f"&equipmentId=-32768"
         f"&subEquipmentId={sub_equip_id}"
         f"&peopleCapacityCategoryCounts={people_param}"
-        f"&searchTime={quote(now)}"
-        f"&flexibleSearch={quote('[false,false,\"' + START_DATE[:7] + '-01\",1]')}"
+        f"&searchTime={search_time}"
+        f"&flexibleSearch={flexible_search}"
         f"&filterData={filter_data}"
     )
     return url
