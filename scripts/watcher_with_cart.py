@@ -41,8 +41,8 @@ load_dotenv(PROJECT_ROOT / ".env")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Default user (overridden by --user argument)
-DEFAULT_USER = "prateek"
+# Default user (overridden by --user argument, or set DEFAULT_USER in .env)
+DEFAULT_USER = os.getenv("DEFAULT_USER", "user1")
 
 
 def get_user_credentials(username):

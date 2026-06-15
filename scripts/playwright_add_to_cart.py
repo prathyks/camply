@@ -33,7 +33,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 # Credentials: check GTC_EMAIL first (set by watcher subprocess),
 # then fall back to user-based format GTC_<user>_EMAIL
-_USER = os.getenv("CAMPLY_USER", "prateek")
+_USER = os.getenv("CAMPLY_USER", os.getenv("DEFAULT_USER", "user1"))
 GTC_EMAIL = os.getenv("GTC_EMAIL") or os.getenv(f"GTC_{_USER}_EMAIL")
 GTC_PASSWORD = os.getenv("GTC_PASSWORD") or os.getenv(f"GTC_{_USER}_PASSWORD")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
