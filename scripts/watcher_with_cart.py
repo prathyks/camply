@@ -38,10 +38,23 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-GTC_EMAIL = os.getenv("GTC_EMAIL")
-GTC_PASSWORD = os.getenv("GTC_PASSWORD")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# Default user (overridden by --user argument)
+DEFAULT_USER = "prateek"
+
+
+def get_user_credentials(username):
+    """Get GTC credentials for the specified user from .env."""
+    email = os.getenv(f"GTC_{username}_EMAIL")
+    password = os.getenv(f"GTC_{username}_PASSWORD")
+    if not email or not password:
+        # Fallback to legacy format (GTC_EMAIL / GTC_PASSWORD)
+        if username == DEFAULT_USER:
+            email = email or os.getenv("GTC_EMAIL")
+            password = password or os.getenv("GTC_PASSWORD")
+    return email, password
 
 BASE_URL = "https://washington.goingtocamp.com"
 
@@ -214,10 +227,10 @@ def check_recdotgov_availability(config, campground_name=None):
     return []
 
 
-def check_availability(config, campground_name=None):
+def check_availability(config, campground_name=None, gtc_email=None, gtc_password=None):
     """
     Check availability using camply's GoingToCamp provider via API.
-    Returns list of available campground names.
+    Returns list of available campground dicts.
     """
     import requests
     from fake_useragent import UserAgent
@@ -244,7 +257,7 @@ def check_availability(config, campground_name=None):
 
     # Login
     session.post(f"{BASE_URL}/api/auth/login",
-                 json={"email": GTC_EMAIL, "password": GTC_PASSWORD})
+                 json={"email": gtc_email, "password": gtc_password})
     session.headers["x-xsrf-token"] = get_latest_xsrf()
 
     # Get cart (needed for availability check)
@@ -367,7 +380,7 @@ TENT_OPTIONS_IDS = {
 }
 
 
-def launch_playwright_add_to_cart(campground_name, config):
+def launch_playwright_add_to_cart(campground_name, config, gtc_email=None, gtc_password=None):
     """Launch Playwright to add a site to cart."""
     from playwright.sync_api import sync_playwright
 
@@ -408,8 +421,8 @@ def launch_playwright_add_to_cart(campground_name, config):
         page.get_by_role("button", name="Sign in to your account").click()
         page.wait_for_load_state("networkidle")
         time.sleep(1)
-        page.get_by_role("textbox", name="Email").fill(GTC_EMAIL)
-        page.get_by_role("textbox", name="Password").fill(GTC_PASSWORD)
+        page.get_by_role("textbox", name="Email").fill(gtc_email)
+        page.get_by_role("textbox", name="Password").fill(gtc_password)
         page.get_by_role("button", name="Sign in", exact=True).click()
         page.wait_for_load_state("networkidle")
         time.sleep(2)
@@ -557,12 +570,15 @@ def launch_playwright_add_to_cart(campground_name, config):
 def main():
     parser = argparse.ArgumentParser(description="Campsite Watcher + Auto Add-to-Cart")
     parser.add_argument("--campground", help="Only watch a specific campground name")
+    parser.add_argument("--user", default=DEFAULT_USER, help=f"User profile for GTC login (default: {DEFAULT_USER})")
     parser.add_argument("--dry-run", action="store_true", help="Check availability without adding to cart")
     parser.add_argument("--once", action="store_true", help="Check once and exit (don't loop)")
     args = parser.parse_args()
 
-    if not GTC_EMAIL or not GTC_PASSWORD:
-        print("ERROR: Set GTC_EMAIL and GTC_PASSWORD in .env")
+    gtc_email, gtc_password = get_user_credentials(args.user)
+    if not gtc_email or not gtc_password:
+        print(f"ERROR: No credentials found for user '{args.user}'")
+        print(f"  Set GTC_{args.user}_EMAIL and GTC_{args.user}_PASSWORD in .env")
         sys.exit(1)
 
     config = load_config()
@@ -570,6 +586,7 @@ def main():
     print("=" * 60)
     print("  Campsite Watcher + Auto Add-to-Cart")
     print("=" * 60)
+    print(f"  User: {args.user} ({gtc_email})")
     print(f"  Dates: {config['start_date']} to {config['end_date']}")
     print(f"  Nights: {config['nights']} consecutive")
     print(f"  People: {config['people']}, Tents: {config['tents']}")
@@ -608,7 +625,7 @@ def main():
         # Check GoingToCamp campgrounds
         available = []
         try:
-            available = check_availability(config, campground_name=args.campground)
+            available = check_availability(config, campground_name=args.campground, gtc_email=gtc_email, gtc_password=gtc_password)
         except Exception as e:
             print(f"  ❌ Error checking GoingToCamp: {e}")
 
@@ -673,6 +690,8 @@ def main():
                                 "CAMPLY_END_DATE": config["end_date"],
                                 "CAMPLY_PEOPLE": str(config["people"]),
                                 "CAMPLY_TENTS": str(config["tents"]),
+                                "GTC_EMAIL": gtc_email,
+                                "GTC_PASSWORD": gtc_password,
                             },
                         )
                         playwright_campground = cg["name"]
