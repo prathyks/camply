@@ -64,27 +64,29 @@ if [[ -z "$PROVIDER" || "$PROVIDER" == "RecreationDotGov" ]]; then
     echo "🔍 Searching RecreationDotGov..."
     output=$($CAMPLY_BIN campgrounds --search "$SEARCH_TERM" 2>&1 || true)
 
-    # Camply output wraps across lines. Join continuation lines, then parse.
-    # Pattern: "⛰  Rec Area (#ID) - 🏕\n  Campground Name (#ID)"
-    # Merge into single lines for parsing
-    merged_output=$(echo "$output" | tr '\n' '§' | sed 's/§[[:space:]]*\([^[§]*\)(#/  \1(#/g' | tr '§' '\n')
-
+    # Parse output: look for lines with "(#ID)" containing campground IDs
+    # Campground name + ID appears on continuation lines (no timestamp, positive large IDs)
+    # Rec area appears on the ⛰ line
+    rec_area_info=""
     while IFS= read -r line; do
-        # Match lines with both rec area and campground: ⛰ ... (#rec_id) - 🏕 ... (#cg_id)
-        if [[ "$line" =~ ⛰ ]] && [[ "$line" =~ \#([0-9]+)\)[[:space:]]*$ ]]; then
+        # Capture rec area from lines with ⛰
+        if [[ "$line" =~ ⛰ ]]; then
+            rec_area_info=$(echo "$line" | sed 's/.*⛰[[:space:]]*//' | sed 's/ - 🏕.*$//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+        fi
+        # Match lines with campground ID (positive integers > 100000)
+        if [[ "$line" =~ \(#([0-9]+)\) ]]; then
             cg_id="${BASH_REMATCH[1]}"
-            # Extract campground name (after 🏕, before (#id))
-            cg_name=$(echo "$line" | sed 's/.*🏕[[:space:]]*//' | sed 's/ (#[0-9]*).*$//' | xargs)
-            # Extract rec area info (after ⛰, before - 🏕)
-            rec_area_info=$(echo "$line" | sed 's/.*⛰[[:space:]]*//' | sed 's/ - 🏕.*//' | xargs)
-
-            if [[ -n "$cg_id" && -n "$cg_name" ]]; then
-                RESULTS+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
-                RESULT_LINES+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
-                echo "  [${#RESULTS[@]}] ${cg_name} (#${cg_id}) — ${rec_area_info}"
+            # Skip rec area IDs (typically small like 2835)
+            if [[ "$cg_id" -gt 100000 ]]; then
+                cg_name=$(echo "$line" | sed -E 's/\(#[0-9]+\).*$//' | sed 's/.*🏕[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+                if [[ -n "$cg_id" && -n "$cg_name" ]]; then
+                    RESULTS+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
+                    RESULT_LINES+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
+                    echo "  [${#RESULTS[@]}] ${cg_name} (#${cg_id}) — ${rec_area_info}"
+                fi
             fi
         fi
-    done <<< "$merged_output"
+    done <<< "$output"
 
     if [[ ${#RESULTS[@]} -eq 0 || "$output" =~ "0 Matching" ]]; then
         echo "  No results on RecreationDotGov"
@@ -97,22 +99,25 @@ if [[ -z "$PROVIDER" || "$PROVIDER" == "GoingToCamp" ]]; then
     echo "🔍 Searching GoingToCamp (WA State Parks)..."
     output=$($CAMPLY_BIN --provider GoingToCamp campgrounds --rec-area 3 --search "$SEARCH_TERM" 2>&1 || true)
 
-    # Merge wrapped lines
-    merged_output=$(echo "$output" | tr '\n' '§' | sed 's/§[[:space:]]*\([^[§]*\)(#/  \1(#/g' | tr '§' '\n')
-
+    # Parse output: look for lines containing "(#" with a negative or positive ID
+    # The campground name and ID may be on a continuation line (no timestamp prefix)
     prev_count=${#RESULTS[@]}
     while IFS= read -r line; do
-        if [[ "$line" =~ ⛰ ]] && [[ "$line" =~ \#(-?[0-9]+)\)[[:space:]]*$ ]]; then
+        # Match continuation lines like: "  Rasar State Park (#-2147483567)"
+        if [[ "$line" =~ \(#(-?[0-9]+)\) ]]; then
             cg_id="${BASH_REMATCH[1]}"
-            cg_name=$(echo "$line" | sed 's/.*🏕[[:space:]]*//' | sed 's/ (#-\?[0-9]*).*$//' | xargs)
-
-            if [[ -n "$cg_id" && -n "$cg_name" ]]; then
-                RESULTS+=("GoingToCamp|3|${cg_id}|${cg_name}")
-                RESULT_LINES+=("GoingToCamp|3|${cg_id}|${cg_name}")
-                echo "  [${#RESULTS[@]}] ${cg_name} (#${cg_id}) — WA State Parks"
+            # Skip rec area IDs (small positive numbers like #3)
+            if [[ "$cg_id" -lt -1000 || "$cg_id" -gt 1000000 ]]; then
+                # Extract name: everything before "(#id)" trimmed
+                cg_name=$(echo "$line" | sed -E 's/\(#-?[0-9]+\).*$//' | sed 's/.*🏕[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+                if [[ -n "$cg_id" && -n "$cg_name" ]]; then
+                    RESULTS+=("GoingToCamp|3|${cg_id}|${cg_name}")
+                    RESULT_LINES+=("GoingToCamp|3|${cg_id}|${cg_name}")
+                    echo "  [${#RESULTS[@]}] ${cg_name} (#${cg_id}) — WA State Parks"
+                fi
             fi
         fi
-    done <<< "$merged_output"
+    done <<< "$output"
 
     if [[ ${#RESULTS[@]} -eq $prev_count ]]; then
         echo "  No results on GoingToCamp"
