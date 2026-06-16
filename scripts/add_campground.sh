@@ -17,21 +17,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF_FILE="${SCRIPT_DIR}/../campgrounds.conf"
 
-# Find camply binary - check common locations
-CAMPLY_BIN=""
-for candidate in \
-    "${HOME}/.local/share/pipx/venvs/camply/bin/camply" \
-    "${HOME}/.local/pipx/venvs/camply/bin/camply" \
-    "${HOME}/.local/bin/camply" \
-    "$(command -v camply 2>/dev/null)"; do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then
-        CAMPLY_BIN="$candidate"
-        break
-    fi
-done
-
+# Find camply binary
+CAMPLY_BIN="$(command -v camply 2>/dev/null || true)"
 if [[ -z "$CAMPLY_BIN" ]]; then
-    echo "ERROR: camply not found. Install with: pipx install camply"
+    echo "ERROR: camply not found on PATH. Install with: pipx install camply"
+    echo "       Then ensure ~/.local/bin is on your PATH."
     exit 1
 fi
 
@@ -76,21 +66,20 @@ if [[ -z "$PROVIDER" || "$PROVIDER" == "RecreationDotGov" ]]; then
     echo "🔍 Searching RecreationDotGov..."
     output=$($CAMPLY_BIN campgrounds --search "$SEARCH_TERM" 2>&1 || true)
 
-    # Parse output: look for lines with "(#ID)" containing campground IDs
-    # Campground name + ID appears on continuation lines (no timestamp, positive large IDs)
-    # Rec area appears on the ⛰ line
+    # Parse output: extract the LAST (#ID) on each line (campground ID)
+    # Rec area info is captured from lines containing ⛰
     rec_area_info=""
     while IFS= read -r line; do
         # Capture rec area from lines with ⛰
-        if [[ "$line" =~ ⛰ ]]; then
+        if echo "$line" | grep -q '⛰' 2>/dev/null; then
             rec_area_info=$(echo "$line" | sed 's/.*⛰[[:space:]]*//' | sed 's/ - 🏕.*$//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
         fi
-        # Match lines with campground ID (positive integers > 100000)
-        if [[ "$line" =~ \(#([0-9]+)\) ]]; then
-            cg_id="${BASH_REMATCH[1]}"
-            # Skip rec area IDs (typically small like 2835)
+        # Extract the last (#ID) from the line
+        cg_id=$(echo "$line" | grep -oE '\(#[0-9]+\)' | tail -1 | tr -d '(#)' || true)
+        if [[ -n "$cg_id" ]]; then
+            # Skip rec area IDs (typically < 100000)
             if [[ "$cg_id" -gt 100000 ]]; then
-                cg_name=$(echo "$line" | sed -E 's/\(#[0-9]+\).*$//' | sed 's/.*🏕[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+                cg_name=$(echo "$line" | sed -E 's/\(#[0-9]+\)[[:space:]]*$//' | sed 's/.*🏕[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
                 if [[ -n "$cg_id" && -n "$cg_name" ]]; then
                     RESULTS+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
                     RESULT_LINES+=("RecreationDotGov|${cg_id}|${cg_name} (${rec_area_info})")
@@ -111,17 +100,17 @@ if [[ -z "$PROVIDER" || "$PROVIDER" == "GoingToCamp" ]]; then
     echo "🔍 Searching GoingToCamp (WA State Parks)..."
     output=$($CAMPLY_BIN --provider GoingToCamp campgrounds --rec-area 3 --search "$SEARCH_TERM" 2>&1 || true)
 
-    # Parse output: look for lines containing "(#" with a negative or positive ID
-    # The campground name and ID may be on a continuation line (no timestamp prefix)
+    # Parse output: extract the LAST (#ID) on each line (campground ID, not rec area ID)
+    # Lines may contain both rec area (#3) and campground (#-2147483567)
     prev_count=${#RESULTS[@]}
     while IFS= read -r line; do
-        # Match continuation lines like: "  Rasar State Park (#-2147483567)"
-        if [[ "$line" =~ \(#(-?[0-9]+)\) ]]; then
-            cg_id="${BASH_REMATCH[1]}"
+        # Extract the last (#ID) from the line using grep
+        cg_id=$(echo "$line" | grep -oE '\(#-?[0-9]+\)' | tail -1 | tr -d '(#)' || true)
+        if [[ -n "$cg_id" ]]; then
             # Skip rec area IDs (small positive numbers like #3)
             if [[ "$cg_id" -lt -1000 || "$cg_id" -gt 1000000 ]]; then
-                # Extract name: everything before "(#id)" trimmed
-                cg_name=$(echo "$line" | sed -E 's/\(#-?[0-9]+\).*$//' | sed 's/.*🏕[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+                # Extract name: text between 🏕 and the last (#id)
+                cg_name=$(echo "$line" | sed -E 's/\(#-?[0-9]+\)[[:space:]]*$//' | sed -E 's/.*\(#[0-9]+\)[[:space:]]*-?[[:space:]]*//' | sed 's/.*🏕[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
                 if [[ -n "$cg_id" && -n "$cg_name" ]]; then
                     RESULTS+=("GoingToCamp|3|${cg_id}|${cg_name}")
                     RESULT_LINES+=("GoingToCamp|3|${cg_id}|${cg_name}")
