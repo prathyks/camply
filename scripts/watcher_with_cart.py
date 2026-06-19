@@ -366,6 +366,9 @@ def check_availability(config, campground_name=None, gtc_email=None, gtc_passwor
             print(f"  ✅ {cg['name']}: AVAILABLE! ({num_sites} site(s), up to {max_nights} nights)")
             cg["available_sites"] = found_sites
             available_campgrounds.append(cg)
+            # Return first match immediately so Playwright can launch ASAP
+            # Remaining campgrounds will be checked on the next cycle
+            return available_campgrounds
         else:
             print(f"  ❌ {cg['name']}: No availability")
 
