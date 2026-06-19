@@ -673,6 +673,12 @@ def main():
                     )
                 else:
                     # GoingToCamp: launch Playwright if no browser is currently open
+                    # Re-check if process has exited before deciding
+                    if playwright_process is not None and playwright_process.poll() is not None:
+                        print(f"  ℹ️  Previous browser closed (exit code {playwright_process.returncode})")
+                        playwright_process = None
+                        playwright_campground = None
+
                     if playwright_process is None:
                         print(f"  🚀 Launching browser for {cg['name']}...")
                         send_telegram(
