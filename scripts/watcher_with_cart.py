@@ -673,8 +673,10 @@ def main():
                 avail_start = best_site.get("avail_start", config["start_date"])
                 avail_end = best_site.get("avail_end", config["end_date"])
 
-                # List site IDs (show up to 5)
-                site_ids = [str(s["resourceId"]) for s in sites_info[:5]]
+                # List site IDs in short form (show up to 5)
+                # Note: WA GoingToCamp doesn't expose site names via API.
+                # Full names (e.g. "Site 39") only visible in browser.
+                site_ids = [f"#{str(abs(s['resourceId']))[-4:]}" for s in sites_info[:5]]
                 site_ids_str = ", ".join(site_ids)
                 if num_sites > 5:
                     site_ids_str += f" (+{num_sites - 5} more)"
