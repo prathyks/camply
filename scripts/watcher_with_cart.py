@@ -189,24 +189,28 @@ def _check_consecutive_availability(avails, min_nights, start_date_str=None):
 def check_recdotgov_availability(config, campground_name=None):
     """
     Check availability for Recreation.gov campgrounds using camply CLI.
-    Returns list of available campground dicts.
+    Uses camply's built-in --notifications telegram to send rich notifications
+    directly (with booking URLs, site names, dates).
+    Returns True if any availability was found, False otherwise.
     """
     recdotgov = config.get("recdotgov_campgrounds", [])
     if not recdotgov:
-        return []
+        return False
 
     if campground_name:
         recdotgov = [cg for cg in recdotgov if campground_name.lower() in cg["name"].lower()]
 
     if not recdotgov:
-        return []
+        return False
 
-    # Build camply command
+    # Build camply command — let camply handle Telegram notifications directly
     cg_args = []
     for cg in recdotgov:
         cg_args.extend(["--campground", cg["id"]])
 
     camply_bin = os.path.expanduser("~/.local/share/pipx/venvs/camply/bin/camply")
+    if not os.path.exists(camply_bin):
+        camply_bin = os.path.expanduser("~/.local/pipx/venvs/camply/bin/camply")
     if not os.path.exists(camply_bin):
         camply_bin = "camply"
 
@@ -217,24 +221,17 @@ def check_recdotgov_availability(config, campground_name=None):
         "--end-date", config["end_date"],
         "--nights", str(config["nights"]),
         "--search-once",
-        "--notifications", "silent",
+        "--notifications", "telegram",
     ]
 
+    print(f"  Checking Recreation.gov ({len(recdotgov)} campground(s))...")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
-                                env={**os.environ, "TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": ""})
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         output = result.stdout + result.stderr
 
-        # Check if camply found any sites (look for campsite match indicators)
         if "Matching Campsites Found" in output and "0 Matching Campsites" not in output:
-            # Try to identify which campground had availability
-            for cg in recdotgov:
-                if cg["id"] in output or cg["name"].split("(")[0].strip().lower() in output.lower():
-                    print(f"  ✅ {cg['name']}: AVAILABLE! (Recreation.gov)")
-                    return [cg]
-            # Couldn't identify which, return first
-            print(f"  ✅ Recreation.gov: AVAILABLE!")
-            return [recdotgov[0]]
+            print(f"  ✅ Recreation.gov: Availability found! (camply sent Telegram notification)")
+            return True
         else:
             for cg in recdotgov:
                 print(f"  ❌ {cg['name']}: No availability (Recreation.gov)")
@@ -243,7 +240,7 @@ def check_recdotgov_availability(config, campground_name=None):
     except Exception as e:
         print(f"  ⚠️  Recreation.gov check error: {e}")
 
-    return []
+    return False
 
 
 def check_availability(config, campground_name=None, gtc_email=None, gtc_password=None):
@@ -651,10 +648,9 @@ def main():
         except Exception as e:
             print(f"  ❌ Error checking GoingToCamp: {e}")
 
-        # Also check Recreation.gov campgrounds
+        # Also check Recreation.gov campgrounds (camply handles Telegram notifications directly)
         try:
-            recdotgov_available = check_recdotgov_availability(config, campground_name=args.campground)
-            available.extend(recdotgov_available)
+            check_recdotgov_availability(config, campground_name=args.campground)
         except Exception as e:
             print(f"  ❌ Error checking Recreation.gov: {e}")
 
@@ -691,17 +687,7 @@ def main():
 
                 print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}! ({num_sites} sites, {avail_start} to {avail_end}, {max_nights} nights)")
 
-                if cg.get("provider") == "RecreationDotGov":
-                    # Recreation.gov — send Telegram with booking link only
-                    booking_url = f"https://www.recreation.gov/camping/campgrounds/{cg['id']}"
-                    print(f"  📱 Sending Telegram notification (Recreation.gov)")
-                    send_telegram(
-                        f"🏕 Campsite Available!\n"
-                        f"{details}\n"
-                        f"🔗 {booking_url}\n"
-                        f"⏰ Book manually on Recreation.gov!"
-                    )
-                elif args.dry_run:
+                if args.dry_run:
                     print("  [DRY RUN] Would launch Playwright to add to cart.")
                     send_telegram(
                         f"🏕 [DRY RUN] Availability found!\n"
