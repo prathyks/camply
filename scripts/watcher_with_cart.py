@@ -135,7 +135,7 @@ def send_telegram(message):
         pass
 
 
-def _check_consecutive_availability(avails, min_nights):
+def _check_consecutive_availability(avails, min_nights, start_date_str=None):
     """
     Check if any resource has min_nights consecutive available nights.
 
@@ -143,27 +143,46 @@ def _check_consecutive_availability(avails, min_nights):
     which is NOT a bookable night. Only check entries [0..n-2] for bookable
     nights (last entry is checkout day status).
 
-    Returns list of available resource IDs with their consecutive night count,
-    or empty list if none found.
+    Returns list of available resource dicts with consecutive night count
+    and actual available date range, or empty list if none found.
     """
+    from datetime import timedelta
+
     available_sites = []
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else None
+
     for rid, days in avails.items():
         if isinstance(days, list):
             # Exclude the last entry (checkout day) - only bookable nights matter
             bookable_days = days[:-1] if len(days) > 1 else days
             consecutive = 0
-            max_consecutive = 0
-            for day in bookable_days:
+            best_run_start = 0
+            best_run_length = 0
+            current_run_start = 0
+
+            for i, day in enumerate(bookable_days):
                 if isinstance(day, dict) and day.get("availability") == 0:
+                    if consecutive == 0:
+                        current_run_start = i
                     consecutive += 1
-                    max_consecutive = max(max_consecutive, consecutive)
+                    if consecutive > best_run_length:
+                        best_run_length = consecutive
+                        best_run_start = current_run_start
                 else:
                     consecutive = 0
-            if max_consecutive >= min_nights:
-                available_sites.append({
+
+            if best_run_length >= min_nights:
+                site_info = {
                     "resourceId": int(rid),
-                    "consecutive_nights": max_consecutive,
-                })
+                    "consecutive_nights": best_run_length,
+                }
+                # Calculate actual available dates
+                if start_date:
+                    avail_start = start_date + timedelta(days=best_run_start)
+                    avail_end = avail_start + timedelta(days=best_run_length)
+                    site_info["avail_start"] = avail_start.strftime("%Y-%m-%d")
+                    site_info["avail_end"] = avail_end.strftime("%Y-%m-%d")
+                available_sites.append(site_info)
     return available_sites
 
 
@@ -335,7 +354,7 @@ def check_availability(config, campground_name=None, gtc_email=None, gtc_passwor
         map_link_avails = data.get("mapLinkAvailabilities", {})
 
         # Check direct resource availability (0 = available for consecutive nights)
-        found_sites = _check_consecutive_availability(avails, config["nights"])
+        found_sites = _check_consecutive_availability(avails, config["nights"], start_date_str=config["start_date"])
 
         # If no direct resources but sub-maps exist, drill into each sub-map
         if not found_sites and map_link_avails:
@@ -355,7 +374,7 @@ def check_availability(config, campground_name=None, gtc_email=None, gtc_passwor
                 if sub_resp.status_code != 200:
                     continue
                 sub_avails = sub_resp.json().get("resourceAvailabilities", {})
-                sub_sites = _check_consecutive_availability(sub_avails, config["nights"])
+                sub_sites = _check_consecutive_availability(sub_avails, config["nights"], start_date_str=config["start_date"])
                 if sub_sites:
                     found_sites.extend(sub_sites)
                     break
@@ -648,15 +667,27 @@ def main():
                 sites_info = cg.get("available_sites", [])
                 num_sites = len(sites_info)
                 max_nights = max((s["consecutive_nights"] for s in sites_info), default=config["nights"])
+
+                # Get actual available dates from first site (best consecutive run)
+                best_site = max(sites_info, key=lambda s: s["consecutive_nights"]) if sites_info else {}
+                avail_start = best_site.get("avail_start", config["start_date"])
+                avail_end = best_site.get("avail_end", config["end_date"])
+
+                # List site IDs (show up to 5)
+                site_ids = [str(s["resourceId"]) for s in sites_info[:5]]
+                site_ids_str = ", ".join(site_ids)
+                if num_sites > 5:
+                    site_ids_str += f" (+{num_sites - 5} more)"
+
                 details = (
                     f"📍 {cg['name']}\n"
-                    f"📅 {config['start_date']} to {config['end_date']}\n"
-                    f"🛏 {max_nights} consecutive night(s) available\n"
-                    f"🏕 {num_sites} site(s) found\n"
+                    f"📅 Available: {avail_start} to {avail_end} ({max_nights} night(s))\n"
+                    f"🔍 Search window: {config['start_date']} to {config['end_date']}\n"
+                    f"🏕 {num_sites} site(s): {site_ids_str}\n"
                     f"👥 {config['people']} people, {config['tents']} tent(s)"
                 )
 
-                print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}! ({num_sites} sites, {max_nights} nights)")
+                print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}! ({num_sites} sites, {avail_start} to {avail_end}, {max_nights} nights)")
 
                 if cg.get("provider") == "RecreationDotGov":
                     # Recreation.gov — send Telegram with booking link only
@@ -689,14 +720,14 @@ def main():
                             f"{details}\n"
                             f"⏰ Launching browser in VNC..."
                         )
-                        # Spawn Playwright as a subprocess so watcher keeps running
+                        # Spawn Playwright with actual available dates
                         playwright_process = subprocess.Popen(
                             [sys.executable, str(PROJECT_ROOT / "scripts" / "playwright_add_to_cart.py")],
                             env={
                                 **os.environ,
                                 "CAMPLY_CAMPGROUND": short_name,
-                                "CAMPLY_START_DATE": config["start_date"],
-                                "CAMPLY_END_DATE": config["end_date"],
+                                "CAMPLY_START_DATE": avail_start,
+                                "CAMPLY_END_DATE": avail_end,
                                 "CAMPLY_PEOPLE": str(config["people"]),
                                 "CAMPLY_TENTS": str(config["tents"]),
                                 "GTC_EMAIL": gtc_email,
