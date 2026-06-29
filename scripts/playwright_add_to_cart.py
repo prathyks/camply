@@ -3,26 +3,26 @@
 Playwright Add-to-Cart Script (Headed - for VNC)
 
 Opens a visible browser, logs in to GoingToCamp, navigates directly to
-search results via pre-built URL, and adds an available site to cart.
+search results via camply-generated booking URL, and adds an available
+site to cart.
 
 Usage:
     cd ~/camply
     python scripts/playwright_add_to_cart.py
 
     # Override via env vars (set by watcher_with_cart.py):
-    CAMPLY_CAMPGROUND="Conconully" CAMPLY_START_DATE="2026-06-19" ...
+    CAMPLY_CAMPGROUND="Conconully" CAMPLY_START_DATE="2026-07-07" ...
 
 The browser will remain open after adding to cart so you can checkout manually.
-If no sites are available, the browser closes automatically after 30 seconds.
+If no sites are available, the browser closes automatically after 10 seconds.
 """
 
 import os
 import re
+import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
 
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
@@ -40,71 +40,73 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # Search parameters (from env vars if spawned by watcher, else defaults)
-START_DATE = os.getenv("CAMPLY_START_DATE", "2026-06-19")
-END_DATE = os.getenv("CAMPLY_END_DATE", "2026-06-21")
+START_DATE = os.getenv("CAMPLY_START_DATE", "2026-07-07")
+END_DATE = os.getenv("CAMPLY_END_DATE", "2026-07-09")
 PEOPLE = int(os.getenv("CAMPLY_PEOPLE", "5"))
 TENTS = int(os.getenv("CAMPLY_TENTS", "1"))
 
 # Campground to search (from env var if spawned by watcher)
 CAMPGROUND_NAME = os.getenv("CAMPLY_CAMPGROUND", "Conconully")
 
-BASE_URL = "https://washington.goingtocamp.com"
-
 # Map tent count to subEquipmentCategoryId
 TENT_IDS = {1: -32768, 2: -32767, 3: -32766}
 
-# Campground lookup: name -> (mapId, resourceLocationId, transactionLocationId)
-# mapId = the park-level child map (shows sub-areas/loops)
-# resourceLocationId = the campground identifier
-# transactionLocationId = required for the search URL
-CAMPGROUND_INFO = {
-    "Deception Pass": {"mapId": -2147483388, "resourceLocationId": -2147483624, "transactionLocationId": -2147483630},
-    "Lake Wenatchee": {"mapId": -2147483375, "resourceLocationId": -2147483594, "transactionLocationId": -2147483608},
-    "Rasar": {"mapId": -2147483362, "resourceLocationId": -2147483567, "transactionLocationId": -2147483588},
-    "Lake Chelan": {"mapId": -2147483377, "resourceLocationId": -2147483599, "transactionLocationId": -2147483612},
-    "Wenatchee Confluence": {"mapId": -2147483349, "resourceLocationId": -2147483543, "transactionLocationId": -2147483568},
-    "Conconully": {"mapId": -2147483391, "resourceLocationId": -2147483628, "transactionLocationId": -2147483634},
+# Campground name to ID (for camply booking-url command)
+CAMPGROUND_IDS = {
+    "Deception Pass": -2147483624,
+    "Lake Wenatchee": -2147483594,
+    "Rasar": -2147483567,
+    "Lake Chelan": -2147483599,
+    "Wenatchee Confluence": -2147483543,
+    "Conconully": -2147483628,
 }
 
+BASE_URL = "https://washington.goingtocamp.com"
+REC_AREA = 3
 
-def build_search_url():
-    """Build the direct search results URL with all parameters pre-filled."""
-    info = CAMPGROUND_INFO.get(CAMPGROUND_NAME, {})
-    map_id = info.get("mapId", -2147483335)
-    resource_location_id = info.get("resourceLocationId", "NULL")
-    transaction_location_id = info.get("transactionLocationId", "NULL")
+
+def generate_booking_url():
+    """Generate booking URL using camply CLI."""
+    campground_id = CAMPGROUND_IDS.get(CAMPGROUND_NAME)
+    if not campground_id:
+        print(f"  ⚠️  Unknown campground: {CAMPGROUND_NAME}, using Conconully")
+        campground_id = -2147483628
+
     sub_equip_id = TENT_IDS.get(TENTS, -32768)
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000")
 
-    # peopleCapacityCategoryCounts format: [[-32767,null,count,null]]
-    people_param = quote(f"[[-32767,null,{PEOPLE},null]]")
-    # filterData: exclude ADA-only and Equestrian sites
-    filter_data = quote('{"-32759":"[[1],0,0,0]","-32708":"[[1],0,0,0]"}')
+    # Find camply binary
+    camply_bin = None
+    for candidate in [
+        os.path.expanduser("~/.local/share/pipx/venvs/camply/bin/camply"),
+        os.path.expanduser("~/.local/pipx/venvs/camply/bin/camply"),
+        os.path.expanduser("~/.local/bin/camply"),
+    ]:
+        if os.path.exists(candidate):
+            camply_bin = candidate
+            break
+    if not camply_bin:
+        camply_bin = "camply"
 
-    nights = int((datetime.strptime(END_DATE, "%Y-%m-%d") - datetime.strptime(START_DATE, "%Y-%m-%d")).days)
-    search_time = quote(now)
-    flex_date = START_DATE[:7] + "-01"
-    flexible_search = quote(f'[false,false,"{flex_date}",1]')
+    cmd = [
+        camply_bin, "--provider", "GoingToCamp", "booking-url",
+        "--rec-area", str(REC_AREA),
+        "--campground", str(campground_id),
+        "--start-date", START_DATE,
+        "--end-date", END_DATE,
+        "--party-size", str(PEOPLE),
+        "--equipment-id", str(sub_equip_id),
+    ]
 
-    url = (
-        f"{BASE_URL}/create-booking/results"
-        f"?transactionLocationId={transaction_location_id}"
-        f"&resourceLocationId={resource_location_id}"
-        f"&mapId={map_id}"
-        f"&searchTabGroupId=0"
-        f"&bookingCategoryId=0"
-        f"&startDate={START_DATE}"
-        f"&endDate={END_DATE}"
-        f"&nights={nights}"
-        f"&isReserving=true"
-        f"&equipmentId=-32768"
-        f"&subEquipmentId={sub_equip_id}"
-        f"&peopleCapacityCategoryCounts={people_param}"
-        f"&searchTime={search_time}"
-        f"&flexibleSearch={flexible_search}"
-        f"&filterData={filter_data}"
-    )
-    return url
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        # The URL is printed as the last line of stdout (raw, for scripts)
+        for line in result.stdout.strip().split("\n"):
+            if line.startswith("https://"):
+                return line.strip()
+    except Exception as e:
+        print(f"  ⚠️  Failed to generate URL via camply: {e}")
+
+    return None
 
 
 def send_telegram(message):
@@ -124,13 +126,11 @@ def send_telegram(message):
 
 def main():
     if not GTC_EMAIL or not GTC_PASSWORD:
-        print("ERROR: Set GTC_EMAIL and GTC_PASSWORD in .env")
+        print("ERROR: Set GTC credentials in .env")
         sys.exit(1)
 
-    search_url = build_search_url()
-
     print("=" * 60)
-    print("  GoingToCamp Add-to-Cart (Fast Direct URL)")
+    print("  GoingToCamp Add-to-Cart (Playwright)")
     print("=" * 60)
     print(f"  Campground: {CAMPGROUND_NAME}")
     print(f"  Dates: {START_DATE} to {END_DATE}")
@@ -138,23 +138,37 @@ def main():
     print("=" * 60)
     print()
 
+    # Generate booking URL via camply
+    print("[1/5] Generating booking URL...")
+    booking_url = generate_booking_url()
+    if not booking_url:
+        print("  ❌ Failed to generate booking URL")
+        sys.exit(1)
+    print(f"  ✅ URL generated")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
 
-        # Step 1: Accept cookies + Login
-        print("[1/4] Logging in...")
+        # Step 2: Login
+        print("[2/5] Logging in...")
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
+        time.sleep(1)
+
+        # Sign in button
+        page.get_by_label("Sign in to your account").click()
+        page.wait_for_load_state("networkidle")
+        time.sleep(1)
+
+        # Cookie consent on login page (if shown)
         try:
-            page.get_by_role("button", name="I Consent").click(timeout=5000)
+            page.locator("#login-cookie-consent").click(timeout=3000)
         except Exception:
             pass
 
-        page.get_by_role("button", name="Sign in to your account").click()
-        page.wait_for_load_state("networkidle")
-        time.sleep(1)
+        # Fill credentials
         page.get_by_role("textbox", name="Email").fill(GTC_EMAIL)
         page.get_by_role("textbox", name="Password").fill(GTC_PASSWORD)
         page.get_by_role("button", name="Sign in", exact=True).click()
@@ -162,15 +176,15 @@ def main():
         time.sleep(2)
         print("  ✅ Logged in")
 
-        # Step 2: Go directly to search results URL (skip form filling)
-        print("[2/4] Navigating to search results...")
-        page.goto(search_url)
+        # Step 3: Navigate to booking URL
+        print("[3/5] Loading search results...")
+        page.goto(booking_url)
         page.wait_for_load_state("networkidle")
         time.sleep(3)
-        print(f"  ✅ Loaded search results for {CAMPGROUND_NAME}")
+        print(f"  ✅ Search results loaded")
 
-        # Step 3: Switch to list view and select first available site
-        print("[3/4] Finding available site...")
+        # Step 4: Switch to list view and select site
+        print("[4/5] Finding available site...")
         try:
             page.get_by_role("radio", name="List view of results").click()
             time.sleep(2)
@@ -178,9 +192,9 @@ def main():
         except Exception:
             print("  ⚠️  Could not switch to list view")
 
-        # Click site group if present
+        # Click site group (e.g. "Site Sites 1-50, Shelters 1-2")
         try:
-            site_group = page.get_by_role("button", name=re.compile(r"Site.*")).first
+            site_group = page.get_by_role("button", name=re.compile(r"Site\s+Sites.*")).first
             if site_group.is_visible(timeout=5000):
                 site_group.click()
                 time.sleep(2)
@@ -201,8 +215,8 @@ def main():
             pass
 
         if not site_found:
-            print("  ❌ No available sites found in list.")
-            print("  Site may have been taken. Closing browser in 10 seconds...")
+            print("  ❌ No available sites found.")
+            print("  Site may have been taken. Closing in 10 seconds...")
             send_telegram(
                 f"⚠️ Site at {CAMPGROUND_NAME} was taken before we could book.\n"
                 f"📅 {START_DATE} to {END_DATE}\n"
@@ -213,47 +227,37 @@ def main():
             browser.close()
             sys.exit(1)
 
-        # Step 4: Reserve and confirm
-        print("[4/4] Adding to cart...")
+        # Step 5: Reserve and confirm
+        print("[5/5] Adding to cart...")
         try:
-            reserve_btn = page.get_by_role("button", name="Reserve")
-            if reserve_btn.is_visible(timeout=10000):
-                reserve_btn.click()
-                time.sleep(2)
-                print("  ✅ Clicked 'Reserve'")
+            page.get_by_role("button", name="Reserve").click()
+            time.sleep(2)
+            print("  ✅ Clicked 'Reserve'")
 
-                # Checkbox
-                try:
-                    page.get_by_text("All reservation details are").click(timeout=5000)
-                    time.sleep(1)
-                    print("  ✅ Checked confirmation")
-                except Exception:
-                    pass
+            # Checkbox
+            page.get_by_role("checkbox", name="All reservation details are").check()
+            time.sleep(1)
+            print("  ✅ Checked confirmation")
 
-                # Confirm
-                try:
-                    page.get_by_role("button", name="Confirm reservation details").click(timeout=10000)
-                    time.sleep(3)
-                    print("  ✅ Added to cart!")
-                    send_telegram(
-                        f"🏕 Site added to cart!\n"
-                        f"📍 {CAMPGROUND_NAME}\n"
-                        f"📅 {START_DATE} to {END_DATE}\n"
-                        f"👥 {PEOPLE} people, {TENTS} tent(s)\n"
-                        f"🔗 {BASE_URL}/cart\n"
-                        f"⏰ ~15 min to checkout! Go to VNC!"
-                    )
-                except Exception as e:
-                    print(f"  ⚠️  Confirm issue: {e}")
-            else:
-                print("  ⚠️  'Reserve' button not found.")
-                send_telegram(
-                    f"⚠️ Found site at {CAMPGROUND_NAME} but couldn't reserve.\n"
-                    f"📅 {START_DATE} to {END_DATE}\n"
-                    f"⏰ Connect to VNC to complete manually."
-                )
+            # Confirm
+            page.get_by_role("button", name="Confirm reservation details").click()
+            time.sleep(3)
+            print("  ✅ Added to cart!")
+            send_telegram(
+                f"🏕 Site added to cart!\n"
+                f"📍 {CAMPGROUND_NAME}\n"
+                f"📅 {START_DATE} to {END_DATE}\n"
+                f"👥 {PEOPLE} people, {TENTS} tent(s)\n"
+                f"🔗 {BASE_URL}/cart\n"
+                f"⏰ ~15 min to checkout! Go to VNC!"
+            )
         except Exception as e:
             print(f"  ⚠️  Reserve issue: {e}")
+            send_telegram(
+                f"🏕 Site found at {CAMPGROUND_NAME}!\n"
+                f"📅 {START_DATE} to {END_DATE}\n"
+                f"⏰ Connect to VNC to complete manually."
+            )
 
         print(f"\n{'=' * 60}")
         print("  Browser is open! Checkout when ready.")
