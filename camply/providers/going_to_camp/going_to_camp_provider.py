@@ -203,6 +203,7 @@ class GoingToCamp(BaseProvider):
         party_size,
         start_date,
         end_date,
+        transaction_location_id=None,
     ):
         """
         Generate a URL which a site can be booked
@@ -213,29 +214,52 @@ class GoingToCamp(BaseProvider):
             The reservation link URL
 
         """
+        from urllib.parse import quote
+        from datetime import datetime
+
         if not sub_equipment_id:
-            sub_equipment_id = ""
+            sub_equipment_id = -32768
+
+        nights = (end_date - start_date).days
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000")
+        flex_date = start_date.isoformat()[:7] + "-01"
+
+        # Build peopleCapacityCategoryCounts parameter
+        people_param = quote(f"[[-32767,null,{party_size},null]]")
+        flexible_search = quote(f'[false,false,"{flex_date}",1]')
+
+        # Use transaction_location_id if provided, else NULL
+        txn_loc_id = transaction_location_id if transaction_location_id else "NULL"
 
         return (
-            "https://%s/create-booking/results?mapId=%s"
+            "https://{domain}/create-booking/results"
+            "?mapId={map_id}"
             "&bookingCategoryId=0"
-            "&startDate=%s"
-            "&endDate=%s"
+            "&startDate={start_date}"
+            "&endDate={end_date}"
+            "&nights={nights}"
             "&isReserving=true"
-            "&equipmentId=%s"
-            "&subEquipmentId=%s"
-            "&partySize=%s"
-            "&resourceLocationId=%s"
-            % (
-                rec_area_domain_name,
-                map_id,
-                start_date.isoformat(),
-                end_date.isoformat(),
-                equipment_id,
-                sub_equipment_id,
-                party_size,
-                resource_location_id,
-            )
+            "&equipmentId={equipment_id}"
+            "&subEquipmentId={sub_equipment_id}"
+            "&resourceLocationId={resource_location_id}"
+            "&transactionLocationId={txn_loc_id}"
+            "&searchTabGroupId=0"
+            "&peopleCapacityCategoryCounts={people_param}"
+            "&searchTime={search_time}"
+            "&flexibleSearch={flexible_search}"
+        ).format(
+            domain=rec_area_domain_name,
+            map_id=map_id,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            nights=nights,
+            equipment_id=equipment_id,
+            sub_equipment_id=sub_equipment_id,
+            resource_location_id=resource_location_id,
+            txn_loc_id=txn_loc_id,
+            people_param=people_param,
+            search_time=quote(now),
+            flexible_search=flexible_search,
         )
 
     def find_facilities_per_recreation_area(

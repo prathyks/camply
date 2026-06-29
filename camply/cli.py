@@ -967,15 +967,34 @@ def booking_url(
     start_dt = date.fromisoformat(start_date)
     end_dt = date.fromisoformat(end_date)
 
+    # Look up transactionLocationId from the resourceLocation API
+    transaction_location_id = None
+    try:
+        hostname = camp_finder._hostname_for(rec_area_id)
+        import requests
+        resp = camp_finder.session.get(
+            f"https://{hostname}/api/resourceLocation",
+            timeout=30,
+        )
+        if resp.ok:
+            import json
+            for loc in json.loads(resp.content):
+                if loc.get("resourceLocationId") == campground_id:
+                    transaction_location_id = loc.get("transactionLocationId")
+                    break
+    except Exception:
+        pass
+
     url = camp_finder.get_reservation_link(
         rec_area_domain_name=domain_name,
         resource_location_id=campground_facility.facility_id,
         map_id=campground_facility.map_id,
         equipment_id=NON_GROUP_EQUIPMENT,
-        sub_equipment_id=equipment_id or "",
+        sub_equipment_id=equipment_id or -32768,
         party_size=party_size,
         start_date=start_dt,
         end_date=end_dt,
+        transaction_location_id=transaction_location_id,
     )
     logger.info(f"🔗 {url}")
     # Also print raw URL for scripts to capture
