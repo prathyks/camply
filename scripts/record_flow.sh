@@ -79,7 +79,10 @@ echo ""
 echo "  Steps to record:"
 echo "    1. Accept cookies (if shown)"
 echo "    2. Sign in to your account"
-echo "    3. You'll land on search results"
+echo "    3. PASTE this URL into the address bar:"
+echo ""
+echo "       $BOOKING_URL"
+echo ""
 echo "    4. Switch to List view"
 echo "    5. Click an available site"
 echo "    6. Click Reserve → Confirm"
@@ -88,7 +91,8 @@ echo "  Close browser when done. Output: scripts/recorded_flow.py"
 echo "============================================="
 echo ""
 
+# Start at home page so user can login first, then navigate to booking URL
 ~/.local/share/pipx/venvs/camply/bin/python -m playwright codegen \
     --target python \
     --output scripts/recorded_flow.py \
-    "$BOOKING_URL"
+    "https://washington.goingtocamp.com"
