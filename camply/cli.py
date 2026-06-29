@@ -875,6 +875,113 @@ def list_campsites(
     camp_search.list_campsite_units()
 
 
+@camply_command_line.command(cls=RichCommand)
+@rec_area_argument
+@campground_argument
+@click.option(
+    "--start-date",
+    required=True,
+    type=click.STRING,
+    help="(YYYY-MM-DD) Start date for the booking.",
+)
+@click.option(
+    "--end-date",
+    required=True,
+    type=click.STRING,
+    help="(YYYY-MM-DD) End date (checkout day) for the booking.",
+)
+@click.option(
+    "--party-size",
+    default=1,
+    type=click.INT,
+    help="Number of people in the party.",
+)
+@click.option(
+    "--equipment-id",
+    default=None,
+    type=click.INT,
+    help="Sub-equipment category ID (e.g. -32768 for 1 tent). "
+    "Use `camply equipment-types` to list options.",
+)
+@provider_argument
+@debug_option
+@click.pass_obj
+def booking_url(
+    context: CamplyContext,
+    debug: bool,
+    rec_area: Optional[int] = None,
+    campground: Optional[int] = None,
+    start_date: str = None,
+    end_date: str = None,
+    party_size: int = 1,
+    equipment_id: Optional[int] = None,
+    provider: Optional[str] = None,
+) -> None:
+    """
+    Generate a booking URL for a campground
+
+    Generate a direct booking URL for a GoingToCamp campground with all
+    search parameters pre-filled. Useful for automation scripts that need
+    to open a browser directly to the search results page.
+    """
+    provider = provider or "GoingToCamp"
+    if context.debug is None:
+        context.debug = debug
+        _set_up_debug(debug=context.debug)
+
+    if provider != "GoingToCamp":
+        logger.error("booking-url is currently only supported for the GoingToCamp provider.")
+        sys.exit(1)
+
+    rec_area_ids = make_list(rec_area, coerce=int)
+    campground_ids = make_list(campground, coerce=int)
+
+    if not rec_area_ids:
+        logger.error("--rec-area is required for generating a booking URL.")
+        sys.exit(1)
+    if not campground_ids:
+        logger.error("--campground is required for generating a booking URL.")
+        sys.exit(1)
+
+    from camply.providers.going_to_camp.going_to_camp_provider import (
+        GoingToCamp as GoingToCampProvider,
+        NON_GROUP_EQUIPMENT,
+    )
+
+    camp_finder = GoingToCampProvider()
+    rec_area_id = rec_area_ids[0]
+    campground_id = campground_ids[0]
+
+    # Look up the campground to get facility_id and map_id
+    campgrounds_found = camp_finder.find_campgrounds(
+        rec_area_id=[rec_area_id],
+        campground_id=[campground_id],
+    )
+    if not campgrounds_found:
+        logger.error(f"Campground {campground_id} not found in rec area {rec_area_id}.")
+        sys.exit(1)
+
+    campground_facility = campgrounds_found[0]
+    domain_name, _ = camp_finder.rec_area_lookup(rec_area_id=rec_area_id)
+
+    start_dt = date.fromisoformat(start_date)
+    end_dt = date.fromisoformat(end_date)
+
+    url = camp_finder.get_reservation_link(
+        rec_area_domain_name=domain_name,
+        resource_location_id=campground_facility.facility_id,
+        map_id=campground_facility.map_id,
+        equipment_id=NON_GROUP_EQUIPMENT,
+        sub_equipment_id=equipment_id or "",
+        party_size=party_size,
+        start_date=start_dt,
+        end_date=end_dt,
+    )
+    logger.info(f"🔗 {url}")
+    # Also print raw URL for scripts to capture
+    print(url)
+
+
 def cli():
     """
     Camply Command Line Utility Wrapper
