@@ -634,106 +634,99 @@ def main():
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"\n[{now_str}] Check #{check_count}...")
 
-        # Check if Playwright process has exited
+        # Always check if Playwright process has exited
         if playwright_process is not None:
             if playwright_process.poll() is not None:
                 print(f"  ℹ️  Browser for {playwright_campground} closed (exit code {playwright_process.returncode})")
                 playwright_process = None
                 playwright_campground = None
 
-        # Check GoingToCamp campgrounds
+        # Check GoingToCamp campgrounds (returns on first match for speed)
         available = []
         try:
             available = check_availability(config, campground_name=args.campground, gtc_email=gtc_email, gtc_password=gtc_password)
         except Exception as e:
             print(f"  ❌ Error checking GoingToCamp: {e}")
 
-        # Also check Recreation.gov campgrounds (camply handles Telegram notifications directly)
+        # If GoingToCamp found availability, launch Playwright IMMEDIATELY
+        # Don't wait for Recreation.gov check
+        if available:
+            cg = available[0]
+            cg_name = cg["name"].replace(" State Park", "")
+            short_name = CAMPGROUND_NAMES.get(cg["id"], cg_name)
+
+            sites_info = cg.get("available_sites", [])
+            num_sites = len(sites_info)
+            max_nights = max((s["consecutive_nights"] for s in sites_info), default=config["nights"])
+
+            best_site = max(sites_info, key=lambda s: s["consecutive_nights"]) if sites_info else {}
+            avail_start = best_site.get("avail_start", config["start_date"])
+            avail_end = best_site.get("avail_end", config["end_date"])
+
+            site_ids = [f"#{str(abs(s['resourceId']))[-4:]}" for s in sites_info[:5]]
+            site_ids_str = ", ".join(site_ids)
+            if num_sites > 5:
+                site_ids_str += f" (+{num_sites - 5} more)"
+
+            details = (
+                f"📍 {cg['name']}\n"
+                f"📅 Available: {avail_start} to {avail_end} ({max_nights} night(s))\n"
+                f"🔍 Search window: {config['start_date']} to {config['end_date']}\n"
+                f"🏕 {num_sites} site(s): {site_ids_str}\n"
+                f"👥 {config['people']} people, {config['tents']} tent(s)"
+            )
+
+            print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}! ({num_sites} sites, {avail_start} to {avail_end}, {max_nights} nights)")
+
+            if args.dry_run:
+                print("  [DRY RUN] Would launch Playwright to add to cart.")
+                send_telegram(
+                    f"🏕 [DRY RUN] Availability found!\n"
+                    f"{details}"
+                )
+            else:
+                # Re-check process state right now
+                if playwright_process is not None and playwright_process.poll() is not None:
+                    playwright_process = None
+                    playwright_campground = None
+
+                if playwright_process is None:
+                    print(f"  🚀 Launching browser for {cg['name']}...")
+                    send_telegram(
+                        f"🏕 Availability Found! Adding to cart...\n"
+                        f"{details}\n"
+                        f"⏰ Launching browser in VNC..."
+                    )
+                    playwright_process = subprocess.Popen(
+                        [sys.executable, str(PROJECT_ROOT / "scripts" / "playwright_add_to_cart.py")],
+                        env={
+                            **os.environ,
+                            "CAMPLY_CAMPGROUND": short_name,
+                            "CAMPLY_START_DATE": avail_start,
+                            "CAMPLY_END_DATE": avail_end,
+                            "CAMPLY_PEOPLE": str(config["people"]),
+                            "CAMPLY_TENTS": str(config["tents"]),
+                            "GTC_EMAIL": gtc_email,
+                            "GTC_PASSWORD": gtc_password,
+                        },
+                    )
+                    playwright_campground = cg["name"]
+                else:
+                    print(f"  📱 Browser still open for {playwright_campground}. Sending notification only.")
+                    send_telegram(
+                        f"🏕 Also Available!\n"
+                        f"{details}\n"
+                        f"ℹ️ Browser open for {playwright_campground}.\n"
+                        f"Close it to auto-book this one next."
+                    )
+        else:
+            print("  No availability found (GoingToCamp).")
+
+        # Check Recreation.gov AFTER GoingToCamp (non-blocking, camply sends its own Telegram)
         try:
             check_recdotgov_availability(config, campground_name=args.campground)
         except Exception as e:
             print(f"  ❌ Error checking Recreation.gov: {e}")
-
-        if available:
-            for cg in available:
-                cg_name = cg["name"].replace(" State Park", "")
-                short_name = CAMPGROUND_NAMES.get(cg["id"], cg_name)
-
-                # Build details string from available sites info
-                sites_info = cg.get("available_sites", [])
-                num_sites = len(sites_info)
-                max_nights = max((s["consecutive_nights"] for s in sites_info), default=config["nights"])
-
-                # Get actual available dates from first site (best consecutive run)
-                best_site = max(sites_info, key=lambda s: s["consecutive_nights"]) if sites_info else {}
-                avail_start = best_site.get("avail_start", config["start_date"])
-                avail_end = best_site.get("avail_end", config["end_date"])
-
-                # List site IDs in short form (show up to 5)
-                # Note: WA GoingToCamp doesn't expose site names via API.
-                # Full names (e.g. "Site 39") only visible in browser.
-                site_ids = [f"#{str(abs(s['resourceId']))[-4:]}" for s in sites_info[:5]]
-                site_ids_str = ", ".join(site_ids)
-                if num_sites > 5:
-                    site_ids_str += f" (+{num_sites - 5} more)"
-
-                details = (
-                    f"📍 {cg['name']}\n"
-                    f"📅 Available: {avail_start} to {avail_end} ({max_nights} night(s))\n"
-                    f"🔍 Search window: {config['start_date']} to {config['end_date']}\n"
-                    f"🏕 {num_sites} site(s): {site_ids_str}\n"
-                    f"👥 {config['people']} people, {config['tents']} tent(s)"
-                )
-
-                print(f"\n🎉 AVAILABILITY FOUND: {cg['name']}! ({num_sites} sites, {avail_start} to {avail_end}, {max_nights} nights)")
-
-                if args.dry_run:
-                    print("  [DRY RUN] Would launch Playwright to add to cart.")
-                    send_telegram(
-                        f"🏕 [DRY RUN] Availability found!\n"
-                        f"{details}"
-                    )
-                else:
-                    # GoingToCamp: launch Playwright if no browser is currently open
-                    # Re-check if process has exited before deciding
-                    if playwright_process is not None and playwright_process.poll() is not None:
-                        print(f"  ℹ️  Previous browser closed (exit code {playwright_process.returncode})")
-                        playwright_process = None
-                        playwright_campground = None
-
-                    if playwright_process is None:
-                        print(f"  🚀 Launching browser for {cg['name']}...")
-                        send_telegram(
-                            f"🏕 Availability Found! Adding to cart...\n"
-                            f"{details}\n"
-                            f"⏰ Launching browser in VNC..."
-                        )
-                        # Spawn Playwright with actual available dates
-                        playwright_process = subprocess.Popen(
-                            [sys.executable, str(PROJECT_ROOT / "scripts" / "playwright_add_to_cart.py")],
-                            env={
-                                **os.environ,
-                                "CAMPLY_CAMPGROUND": short_name,
-                                "CAMPLY_START_DATE": avail_start,
-                                "CAMPLY_END_DATE": avail_end,
-                                "CAMPLY_PEOPLE": str(config["people"]),
-                                "CAMPLY_TENTS": str(config["tents"]),
-                                "GTC_EMAIL": gtc_email,
-                                "GTC_PASSWORD": gtc_password,
-                            },
-                        )
-                        playwright_campground = cg["name"]
-                    else:
-                        # Browser already open — just send notification
-                        print(f"  📱 Browser already open for {playwright_campground}. Sending notification only.")
-                        send_telegram(
-                            f"🏕 Also Available!\n"
-                            f"{details}\n"
-                            f"ℹ️ Browser already open for {playwright_campground}.\n"
-                            f"Close it to auto-book this one next."
-                        )
-        else:
-            print("  No availability found.")
 
         if args.once or args.dry_run:
             break
