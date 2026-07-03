@@ -261,17 +261,34 @@ def main():
 
         print(f"\n{'=' * 60}")
         print("  Browser is open! Checkout when ready.")
-        print("  Press Ctrl+C to close.")
+        print("  Close browser window or press Ctrl+C to exit.")
         print(f"{'=' * 60}")
 
-        # Keep browser open
+        # Keep alive until browser is closed or Ctrl+C
         try:
             while True:
-                time.sleep(60)
+                # Check if browser is still connected every 5 seconds
+                if not browser.contexts:
+                    print("\n  Browser closed by user.")
+                    break
+                try:
+                    # Ping the page to check if it's still alive
+                    page.evaluate("1")
+                except Exception:
+                    print("\n  Browser window closed.")
+                    break
+                time.sleep(5)
         except KeyboardInterrupt:
             print("\nClosing browser...")
-            context.close()
-            browser.close()
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
