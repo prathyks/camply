@@ -1,98 +1,88 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Record Playwright Flow with a GoingToCamp Booking URL
+# Record Playwright UI-Navigation Flow for GoingToCamp
 #
-# Generates a booking URL using camply, then opens Playwright codegen
-# pointed at that URL. Record the flow:
-#   1. Accept cookies
-#   2. Login
-#   3. (You'll already be on the search results page)
-#   4. Switch to List view
-#   5. Click an available site
-#   6. Click Reserve → Confirm
+# Opens Playwright codegen at the GoingToCamp home page. Record the FULL
+# UI navigation flow so we capture all interaction patterns (including
+# campgrounds with multiple sub-areas like Lake Wenatchee North/South).
+#
+# Record these steps:
+#   1. Accept cookies (I Consent)
+#   2. Sign in
+#   3. Click "Create reservation"
+#   4. Select the park
+#   5. Set dates
+#   6. Set party size (Add one)
+#   7. Select equipment (tent)
+#   8. Click "Search for availability"
+#   9. Switch to List view
+#   10. Expand any sub-area / site group (IMPORTANT: capture this for
+#       multi-campground parks like Lake Wenatchee)
+#   11. Click an available site
+#   12. Click Reserve
+#   13. Check "All reservation details are correct"
+#   14. Click "Confirm reservation details"
 #
 # Usage:
 #   cd ~/camply
-#   bash scripts/record_flow.sh
-#   bash scripts/record_flow.sh --campground -2147483567 --start-date 2026-07-03 --end-date 2026-07-05
-#
-# Defaults (edit below or pass as arguments):
-#   Campground: Conconully (-2147483628)
-#   Dates: 2026-06-19 to 2026-06-21
-#   Party: 4 people, 1 tent
+#   bash scripts/record_flow.sh                       # -> scripts/recorded_flow.py
+#   bash scripts/record_flow.sh lake_wenatchee        # -> scripts/recorded_lake_wenatchee.py
+#   bash scripts/record_flow.sh conconully            # -> scripts/recorded_conconully.py
 # =============================================================================
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Defaults
-REC_AREA=3
-CAMPGROUND="-2147483628"
-START_DATE="2026-06-19"
-END_DATE="2026-06-21"
-PARTY_SIZE=4
-EQUIPMENT_ID="-32768"
+# Output file name (defaults to recorded_flow.py)
+LABEL="${1:-flow}"
+OUTPUT="scripts/recorded_${LABEL}.py"
 
-# Parse optional arguments
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --campground) CAMPGROUND="$2"; shift 2 ;;
-        --start-date) START_DATE="$2"; shift 2 ;;
-        --end-date) END_DATE="$2"; shift 2 ;;
-        --party-size) PARTY_SIZE="$2"; shift 2 ;;
-        --equipment-id) EQUIPMENT_ID="$2"; shift 2 ;;
-        --rec-area) REC_AREA="$2"; shift 2 ;;
-        *) echo "Unknown arg: $1"; exit 1 ;;
-    esac
+# Find camply venv python (has playwright installed)
+PYTHON=""
+for candidate in \
+    "${HOME}/.local/share/pipx/venvs/camply/bin/python" \
+    "${HOME}/.local/pipx/venvs/camply/bin/python"; do
+    if [[ -x "$candidate" ]]; then
+        PYTHON="$candidate"
+        break
+    fi
 done
-
-echo "============================================="
-echo "  Generating Booking URL..."
-echo "============================================="
-echo "  Campground: $CAMPGROUND"
-echo "  Dates: $START_DATE to $END_DATE"
-echo "  Party: $PARTY_SIZE people"
-echo "  Equipment: $EQUIPMENT_ID"
-echo ""
-
-# Generate URL using camply
-BOOKING_URL=$(camply --provider GoingToCamp booking-url \
-    --rec-area "$REC_AREA" \
-    --campground "$CAMPGROUND" \
-    --start-date "$START_DATE" \
-    --end-date "$END_DATE" \
-    --party-size "$PARTY_SIZE" \
-    --equipment-id "$EQUIPMENT_ID" 2>/dev/null | grep "^https://")
-
-if [[ -z "$BOOKING_URL" ]]; then
-    echo "ERROR: Failed to generate booking URL"
+if [[ -z "$PYTHON" ]]; then
+    echo "ERROR: camply venv python not found"
     exit 1
 fi
 
-echo "  URL: $BOOKING_URL"
-echo ""
 echo "============================================="
-echo "  Starting Playwright Recorder..."
+echo "  Playwright UI-Navigation Recorder"
 echo "============================================="
+echo "  Output: $OUTPUT"
 echo ""
-echo "  Steps to record:"
-echo "    1. Accept cookies (if shown)"
+echo "  Record the FULL flow via the UI:"
+echo "    1. Accept cookies (I Consent)"
 echo "    2. Sign in to your account"
-echo "    3. PASTE this URL into the address bar:"
+echo "    3. Click 'Create reservation'"
+echo "    4. Select the park"
+echo "    5. Set dates"
+echo "    6. Set party size (Add one)"
+echo "    7. Select equipment (tent)"
+echo "    8. Click 'Search for availability'"
+echo "    9. Switch to List view"
+echo "   10. Expand sub-area / site group (IMPORTANT for"
+echo "       multi-campground parks like Lake Wenatchee!)"
+echo "   11. Click an available site"
+echo "   12. Click Reserve"
+echo "   13. Check 'All reservation details are correct'"
+echo "   14. Click 'Confirm reservation details'"
 echo ""
-echo "       $BOOKING_URL"
-echo ""
-echo "    4. Switch to List view"
-echo "    5. Click an available site"
-echo "    6. Click Reserve → Confirm"
-echo ""
-echo "  Close browser when done. Output: scripts/recorded_flow.py"
+echo "  Close browser when done."
 echo "============================================="
 echo ""
 
-# Start at home page so user can login first, then navigate to booking URL
-~/.local/share/pipx/venvs/camply/bin/python -m playwright codegen \
+"$PYTHON" -m playwright codegen \
     --target python \
-    --output scripts/recorded_flow.py \
+    --output "$OUTPUT" \
     "https://washington.goingtocamp.com"
+
+echo ""
+echo "✅ Recording saved to: $OUTPUT"
