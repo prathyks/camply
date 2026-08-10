@@ -203,6 +203,7 @@ class GoingToCamp(BaseProvider):
         party_size,
         start_date,
         end_date,
+        transaction_location_id=None,
     ):
         """
         Generate a URL which a site can be booked
@@ -213,29 +214,52 @@ class GoingToCamp(BaseProvider):
             The reservation link URL
 
         """
+        from urllib.parse import quote
+        from datetime import datetime
+
         if not sub_equipment_id:
-            sub_equipment_id = ""
+            sub_equipment_id = -32768
+
+        nights = (end_date - start_date).days
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000")
+        flex_date = start_date.isoformat()[:7] + "-01"
+
+        # Build peopleCapacityCategoryCounts parameter
+        people_param = quote(f"[[-32767,null,{party_size},null]]")
+        flexible_search = quote(f'[false,false,"{flex_date}",1]')
+
+        # Use transaction_location_id if provided, else NULL
+        txn_loc_id = transaction_location_id if transaction_location_id else "NULL"
 
         return (
-            "https://%s/create-booking/results?mapId=%s"
+            "https://{domain}/create-booking/results"
+            "?mapId={map_id}"
             "&bookingCategoryId=0"
-            "&startDate=%s"
-            "&endDate=%s"
+            "&startDate={start_date}"
+            "&endDate={end_date}"
+            "&nights={nights}"
             "&isReserving=true"
-            "&equipmentId=%s"
-            "&subEquipmentId=%s"
-            "&partySize=%s"
-            "&resourceLocationId=%s"
-            % (
-                rec_area_domain_name,
-                map_id,
-                start_date.isoformat(),
-                end_date.isoformat(),
-                equipment_id,
-                sub_equipment_id,
-                party_size,
-                resource_location_id,
-            )
+            "&equipmentId={equipment_id}"
+            "&subEquipmentId={sub_equipment_id}"
+            "&resourceLocationId={resource_location_id}"
+            "&transactionLocationId={txn_loc_id}"
+            "&searchTabGroupId=0"
+            "&peopleCapacityCategoryCounts={people_param}"
+            "&searchTime={search_time}"
+            "&flexibleSearch={flexible_search}"
+        ).format(
+            domain=rec_area_domain_name,
+            map_id=map_id,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            nights=nights,
+            equipment_id=equipment_id,
+            sub_equipment_id=sub_equipment_id,
+            resource_location_id=resource_location_id,
+            txn_loc_id=txn_loc_id,
+            people_param=people_param,
+            search_time=quote(now),
+            flexible_search=flexible_search,
         )
 
     def find_facilities_per_recreation_area(
@@ -283,9 +307,22 @@ class GoingToCamp(BaseProvider):
         )
 
         campgrounds = []
-        # Fetch campgrounds details for all facilities
+        # Fetch campgrounds details for all facilities from the maps API.
+        # The maps API returns a list of map objects, each containing mapLinks
+        # that associate a resourceLocationId with a childMapId (the map for
+        # that campground).
         for camp_details in self._api_request(rec_area_id, "CAMP_DETAILS"):
-            self.campground_details[camp_details["resourceLocationId"]] = camp_details
+            rl_id = camp_details.get("resourceLocationId")
+            if rl_id is not None:
+                self.campground_details[rl_id] = camp_details
+            for map_link in camp_details.get("mapLinks", []):
+                link_rl_id = map_link.get("resourceLocationId")
+                if link_rl_id is not None:
+                    self.campground_details[link_rl_id] = {
+                        "resourceLocationId": link_rl_id,
+                        "mapId": map_link.get("childMapId"),
+                        "parentMapId": camp_details.get("mapId"),
+                    }
 
         # If a search string is provided, make sure every facility name contains
         # the search string
@@ -424,7 +461,13 @@ class GoingToCamp(BaseProvider):
         -------
         Tuple[dict, CampgroundFacility]
         """
-        self.campground_details[facility.resource_location_id]
+        if facility.resource_location_id not in self.campground_details:
+            logger.debug(
+                f"Skipping facility {facility.resource_location_name!r} "
+                f"(resource_location_id={facility.resource_location_id}): "
+                "not found in campground details"
+            )
+            return facility, None
         facility.id = _fetch_nested_key(
             self.campground_details, facility.resource_location_id, "mapId"
         )
