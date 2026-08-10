@@ -174,13 +174,27 @@ def main():
             print(f"  ⚠️  Date selection issue: {e}")
             print("     Please select dates manually in the browser.")
 
-        # Set number of people (default is 2, click "Add one" to increase)
-        add_people_clicks = PEOPLE - 2
-        if add_people_clicks > 0:
-            for _ in range(add_people_clicks):
+        # Set number of people. The default value varies, so normalize first:
+        # click "Remove one" repeatedly to floor at the minimum (1), then
+        # "Add one" (PEOPLE - 1) times. Extra Remove clicks at the floor are
+        # harmless no-ops. This is deterministic regardless of the default.
+        try:
+            for _ in range(15):  # floor to minimum (usually 1)
+                try:
+                    remove_btn = page.get_by_role("button", name="Remove one").first
+                    if remove_btn.is_disabled():
+                        break
+                    remove_btn.click()
+                    time.sleep(0.1)
+                except Exception:
+                    break
+            # Now at minimum (assume 1). Add up to target.
+            for _ in range(PEOPLE - 1):
                 page.get_by_role("button", name="Add one").click()
-                time.sleep(0.3)
+                time.sleep(0.2)
             print(f"  ✅ Set party size to {PEOPLE}")
+        except Exception as e:
+            print(f"  ⚠️  Party size issue: {e}")
 
         # Select tent equipment
         tent_label = TENT_OPTIONS.get(TENTS, "1 Tent")
