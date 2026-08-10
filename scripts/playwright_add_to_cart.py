@@ -207,31 +207,44 @@ def main():
         except Exception:
             print("  ⚠️  Could not switch to list view")
 
-        # Expand site group / sub-area if present.
-        # Single-area parks (Conconully): "Site Sites 1-50, Shelters 1-2"
-        # Multi-sub-area parks (Lake Wenatchee): "Site South Campground", "Site North Campground"
-        # The regex matches any button starting with "Site " that is a group header.
+        # Site selection handles 3 layouts:
+        #   Conconully:     group "Site Sites 1-50" -> site "Site 2 Available"
+        #   Lake Wenatchee: sub-area "Site South Campground" -> View more -> "Site 23 Available"
+        #   Deception Pass: sub-area "Site Forest Loop Available" -> "Site 13 Available" -> Acknowledge
+        #
+        # Key distinction:
+        #   Sub-area/group header = "Site <TEXT>"   (e.g. Forest Loop, South Campground, Sites 1-50)
+        #   Individual site       = "Site <NUMBER>" (e.g. Site 13, Site 2)
+        # A sub-area may itself contain "Available", so we can't use that to tell them apart.
+
+        # Regex: sub-area = "Site " followed by a non-digit; site = "Site " followed by digits
+        SUBAREA_RE = re.compile(r"^Site\s+(?!\d)")
+        SITE_RE = re.compile(r"^Site\s+\d+\b.*Available")
+
+        # Step A: If there's a sub-area/group header, click it (prefer one marked Available)
         try:
-            # Try to find a group/sub-area button. It starts with "Site " but is
-            # NOT an individual bookable site (those have "Available"/"Unavailable").
-            group_buttons = page.get_by_role("button", name=re.compile(r"^Site\s+(?!\d+\s)")).all()
-            for group_btn in group_buttons:
+            subareas = page.get_by_role("button", name=SUBAREA_RE).all()
+            chosen = None
+            for btn in subareas:
                 try:
-                    label = group_btn.inner_text().strip()
-                    # Skip individual sites (they contain Available/Unavailable)
-                    if "Available" in label or "Unavailable" in label:
+                    if not btn.is_visible():
                         continue
-                    if group_btn.is_visible():
-                        group_btn.click()
-                        time.sleep(2)
-                        print(f"  ✅ Expanded group/sub-area: {label}")
+                    label = btn.inner_text().strip()
+                    if "Available" in label:
+                        chosen = (btn, label)
                         break
+                    if chosen is None:
+                        chosen = (btn, label)
                 except Exception:
                     continue
+            if chosen:
+                chosen[0].click()
+                time.sleep(2)
+                print(f"  ✅ Opened sub-area/group: {chosen[1].splitlines()[0]}")
         except Exception:
             pass
 
-        # Click "View more" to reveal all sites (multi-sub-area parks)
+        # Step B: Click "View more" to reveal all sites (some multi-sub-area parks)
         try:
             view_more = page.get_by_role("button", name="View more").first
             if view_more.is_visible(timeout=3000):
@@ -241,18 +254,39 @@ def main():
         except Exception:
             pass
 
-        # Find and click first available site
+        # Step C: Click first individual available site ("Site <NUMBER> ... Available")
         site_found = False
         try:
-            available_site = page.get_by_role("button", name=re.compile(r".*Available.*")).first
+            available_site = page.get_by_role("button", name=SITE_RE).first
             if available_site.is_visible(timeout=5000):
                 site_name = available_site.inner_text()
                 available_site.click()
                 time.sleep(2)
                 site_found = True
-                print(f"  ✅ Selected available site: {site_name.strip()}")
+                print(f"  ✅ Selected available site: {site_name.splitlines()[0].strip()}")
         except Exception as e:
-            print(f"  ⚠️  Could not auto-select site: {e}")
+            print(f"  ⚠️  Could not auto-select numbered site: {e}")
+
+        # Fallback: if no numbered site matched, try any "Available" button that
+        # is NOT a sub-area header (in case a park uses a different naming)
+        if not site_found:
+            try:
+                candidates = page.get_by_role("button", name=re.compile(r".*Available.*")).all()
+                for btn in candidates:
+                    try:
+                        label = btn.inner_text().strip()
+                        if SUBAREA_RE.match(label):
+                            continue  # skip sub-area headers
+                        if btn.is_visible():
+                            btn.click()
+                            time.sleep(2)
+                            site_found = True
+                            print(f"  ✅ Selected available site (fallback): {label.splitlines()[0].strip()}")
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
 
         if not site_found:
             print("  ❌ No available sites found. Site may have been taken.")
@@ -273,6 +307,16 @@ def main():
             page.get_by_role("button", name="Reserve").click()
             time.sleep(2)
             print("  ✅ Clicked 'Reserve'")
+
+            # Handle optional "Acknowledge" popup (e.g. Deception Pass warnings)
+            try:
+                ack_btn = page.get_by_role("button", name="Acknowledge")
+                if ack_btn.is_visible(timeout=3000):
+                    ack_btn.click()
+                    time.sleep(1)
+                    print("  ✅ Acknowledged popup")
+            except Exception:
+                pass
 
             # Check the "All reservation details are correct" checkbox
             try:
