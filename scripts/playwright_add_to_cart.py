@@ -207,12 +207,37 @@ def main():
         except Exception:
             print("  ⚠️  Could not switch to list view")
 
-        # Click site group if present (optional - some parks don't have groups)
+        # Expand site group / sub-area if present.
+        # Single-area parks (Conconully): "Site Sites 1-50, Shelters 1-2"
+        # Multi-sub-area parks (Lake Wenatchee): "Site South Campground", "Site North Campground"
+        # The regex matches any button starting with "Site " that is a group header.
         try:
-            site_group = page.get_by_role("button", name=re.compile(r"Site\s+Sites.*")).first
-            if site_group.is_visible(timeout=5000):
-                site_group.click()
-                time.sleep(2)
+            # Try to find a group/sub-area button. It starts with "Site " but is
+            # NOT an individual bookable site (those have "Available"/"Unavailable").
+            group_buttons = page.get_by_role("button", name=re.compile(r"^Site\s+(?!\d+\s)")).all()
+            for group_btn in group_buttons:
+                try:
+                    label = group_btn.inner_text().strip()
+                    # Skip individual sites (they contain Available/Unavailable)
+                    if "Available" in label or "Unavailable" in label:
+                        continue
+                    if group_btn.is_visible():
+                        group_btn.click()
+                        time.sleep(2)
+                        print(f"  ✅ Expanded group/sub-area: {label}")
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # Click "View more" to reveal all sites (multi-sub-area parks)
+        try:
+            view_more = page.get_by_role("button", name="View more").first
+            if view_more.is_visible(timeout=3000):
+                view_more.click()
+                time.sleep(1)
+                print("  ✅ Clicked 'View more'")
         except Exception:
             pass
 
