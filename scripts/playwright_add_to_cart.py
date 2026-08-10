@@ -308,7 +308,7 @@ def main():
             time.sleep(2)
             print("  ✅ Clicked 'Reserve'")
 
-            # Handle optional "Acknowledge" popup (e.g. Deception Pass warnings)
+            # Handle optional "Acknowledge" popup (can appear on any campground)
             try:
                 ack_btn = page.get_by_role("button", name="Acknowledge")
                 if ack_btn.is_visible(timeout=3000):
