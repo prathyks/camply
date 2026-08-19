@@ -75,7 +75,9 @@ declare -a RESULT_LINES=()
 # --- Search RecreationDotGov ---
 if [[ -z "$PROVIDER" || "$PROVIDER" == "RecreationDotGov" ]]; then
     echo "🔍 Searching RecreationDotGov..."
-    output=$($CAMPLY_BIN campgrounds --search "$SEARCH_TERM" 2>&1 || true)
+    # Force wide COLUMNS so camply's rich-output doesn't wrap long lines
+    # (wrapping breaks the line-by-line parser)
+    output=$(COLUMNS=500 $CAMPLY_BIN campgrounds --search "$SEARCH_TERM" 2>&1 || true)
 
     # Parse output: extract the LAST (#ID) on each line (campground ID)
     # Rec area info is captured from lines containing ⛰
@@ -109,7 +111,8 @@ fi
 # --- Search GoingToCamp (WA State Parks, rec-area 3) ---
 if [[ -z "$PROVIDER" || "$PROVIDER" == "GoingToCamp" ]]; then
     echo "🔍 Searching GoingToCamp (WA State Parks)..."
-    output=$($CAMPLY_BIN --provider GoingToCamp campgrounds --rec-area 3 --search "$SEARCH_TERM" 2>&1 || true)
+    # Force wide COLUMNS so camply's rich-output doesn't wrap long lines
+    output=$(COLUMNS=500 $CAMPLY_BIN --provider GoingToCamp campgrounds --rec-area 3 --search "$SEARCH_TERM" 2>&1 || true)
 
     # Parse output: extract the LAST (#ID) on each line (campground ID, not rec area ID)
     # Lines may contain both rec area (#3) and campground (#-2147483567)
