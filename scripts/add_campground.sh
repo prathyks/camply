@@ -17,11 +17,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF_FILE="${SCRIPT_DIR}/../campgrounds.conf"
 
-# Find camply binary
+# Find camply binary - check PATH first, then common install locations
 CAMPLY_BIN="$(command -v camply 2>/dev/null || true)"
 if [[ -z "$CAMPLY_BIN" ]]; then
-    echo "ERROR: camply not found on PATH. Install with: pipx install camply"
-    echo "       Then ensure ~/.local/bin is on your PATH."
+    for candidate in \
+        "${HOME}/.local/bin/camply" \
+        "${HOME}/.local/share/pipx/venvs/camply/bin/camply" \
+        "${HOME}/.local/pipx/venvs/camply/bin/camply"; do
+        if [[ -x "$candidate" ]]; then
+            CAMPLY_BIN="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -z "$CAMPLY_BIN" ]]; then
+    echo "ERROR: camply not found on PATH or common install locations."
+    echo "       Install with: pipx install camply"
     exit 1
 fi
 
